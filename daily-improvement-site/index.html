@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>日精進 — Gary's Daily Improvement Journey</title>
+<meta name="description" content="Gary Lee 的日精進時間軸，記錄每日覺察、成長與蛻變的旅程。">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@400;700;900&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #0a0a0f;
+  --bg2: #12121a;
+  --card: #1a1a2e;
+  --card-hover: #1e1e35;
+  --gold: #d4a373;
+  --gold-light: #e8c9a0;
+  --accent: #7c5bf5;
+  --accent2: #5ba8f5;
+  --text: #e8e6e3;
+  --text-dim: #8a8a9a;
+  --line: rgba(212, 163, 115, 0.3);
+}
+
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Noto Serif TC', serif;
+  line-height: 1.8;
+  overflow-x: hidden;
+}
+
+/* Stars background */
+body::before {
+  content: '';
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  background: 
+    radial-gradient(1px 1px at 10% 20%, rgba(255,255,255,0.4), transparent),
+    radial-gradient(1px 1px at 30% 60%, rgba(255,255,255,0.3), transparent),
+    radial-gradient(1.5px 1.5px at 50% 10%, rgba(255,255,255,0.5), transparent),
+    radial-gradient(1px 1px at 70% 40%, rgba(255,255,255,0.3), transparent),
+    radial-gradient(1px 1px at 90% 80%, rgba(255,255,255,0.4), transparent),
+    radial-gradient(1.5px 1.5px at 20% 90%, rgba(255,255,255,0.3), transparent),
+    radial-gradient(1px 1px at 60% 70%, rgba(255,255,255,0.35), transparent),
+    radial-gradient(1px 1px at 80% 15%, rgba(255,255,255,0.3), transparent);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* Hero */
+.hero {
+  position: relative;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 2rem;
+  overflow: hidden;
+}
+
+.hero::before {
+  content: '';
+  position: absolute;
+  width: 600px; height: 600px;
+  background: radial-gradient(circle, rgba(124,91,245,0.15), transparent 70%);
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  animation: pulse 6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.5; }
+  50% { transform: translate(-50%, -50%) scale(1.3); opacity: 0.8; }
+}
+
+.hero-day {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.9rem;
+  letter-spacing: 6px;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin-bottom: 1.5rem;
+  opacity: 0;
+  animation: fadeUp 1s 0.3s forwards;
+}
+
+.hero h1 {
+  font-size: clamp(2.5rem, 6vw, 5rem);
+  font-weight: 900;
+  background: linear-gradient(135deg, var(--gold-light), var(--gold), var(--accent));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 1rem;
+  opacity: 0;
+  animation: fadeUp 1s 0.5s forwards;
+}
+
+.hero-subtitle {
+  font-size: clamp(1rem, 2.5vw, 1.4rem);
+  color: var(--text-dim);
+  max-width: 600px;
+  opacity: 0;
+  animation: fadeUp 1s 0.7s forwards;
+}
+
+.scroll-hint {
+  position: absolute;
+  bottom: 3rem;
+  opacity: 0;
+  animation: fadeUp 1s 1.2s forwards;
+}
+
+.scroll-hint span {
+  display: block;
+  width: 2px;
+  height: 40px;
+  background: linear-gradient(to bottom, var(--gold), transparent);
+  margin: 0 auto;
+  animation: scrollDown 2s ease-in-out infinite;
+}
+
+@keyframes scrollDown {
+  0%, 100% { transform: translateY(0); opacity: 0.3; }
+  50% { transform: translateY(15px); opacity: 1; }
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(30px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Counter */
+.counter-section {
+  text-align: center;
+  padding: 4rem 2rem;
+  position: relative;
+}
+
+.counter-number {
+  font-family: 'Inter', sans-serif;
+  font-size: clamp(4rem, 10vw, 8rem);
+  font-weight: 600;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.counter-label {
+  font-size: 1.2rem;
+  color: var(--text-dim);
+  margin-top: 0.5rem;
+}
+
+/* Timeline */
+.timeline {
+  position: relative;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 4rem 2rem;
+}
+
+.timeline::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0; bottom: 0;
+  width: 2px;
+  background: linear-gradient(to bottom, transparent, var(--line), var(--line), transparent);
+  transform: translateX(-50%);
+}
+
+@media (max-width: 768px) {
+  .timeline::before { left: 20px; }
+}
+
+/* Timeline Entry */
+.entry {
+  position: relative;
+  margin-bottom: 6rem;
+  opacity: 0;
+  transform: translateY(60px);
+  transition: all 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.entry.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.entry:nth-child(odd) { padding-right: calc(50% + 40px); text-align: right; }
+.entry:nth-child(even) { padding-left: calc(50% + 40px); text-align: left; }
+
+@media (max-width: 768px) {
+  .entry:nth-child(odd),
+  .entry:nth-child(even) {
+    padding-left: 50px;
+    padding-right: 0;
+    text-align: left;
+  }
+}
+
+/* Dot on timeline */
+.entry::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 30px;
+  width: 16px; height: 16px;
+  background: var(--gold);
+  border: 3px solid var(--bg);
+  border-radius: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  box-shadow: 0 0 20px rgba(212, 163, 115, 0.4);
+  transition: transform 0.3s, box-shadow 0.3s;
+}
+
+.entry.visible::before {
+  animation: dotPop 0.5s 0.3s forwards;
+}
+
+@keyframes dotPop {
+  0% { transform: translateX(-50%) scale(0); }
+  50% { transform: translateX(-50%) scale(1.5); }
+  100% { transform: translateX(-50%) scale(1); }
+}
+
+@media (max-width: 768px) {
+  .entry::before { left: 20px; }
+}
+
+/* Card */
+.card {
+  background: var(--card);
+  border-radius: 16px;
+  padding: 2rem;
+  border: 1px solid rgba(255,255,255,0.05);
+  transition: all 0.4s;
+  position: relative;
+  overflow: hidden;
+}
+
+.card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%; height: 3px;
+  background: linear-gradient(90deg, var(--gold), var(--accent), var(--accent2));
+}
+
+.card:hover {
+  background: var(--card-hover);
+  border-color: rgba(212, 163, 115, 0.2);
+  transform: translateY(-4px);
+  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+}
+
+.card-day {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.8rem;
+  letter-spacing: 3px;
+  color: var(--gold);
+  margin-bottom: 0.5rem;
+}
+
+.card-date {
+  font-size: 0.9rem;
+  color: var(--text-dim);
+  margin-bottom: 1rem;
+}
+
+.card h2 {
+  font-size: 1.4rem;
+  font-weight: 700;
+  margin-bottom: 1.2rem;
+  line-height: 1.5;
+  background: linear-gradient(135deg, var(--text), var(--gold-light));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.card-content {
+  color: var(--text-dim);
+  font-size: 0.95rem;
+  line-height: 2;
+}
+
+.card-content p { margin-bottom: 1rem; }
+.card-content strong { color: var(--gold-light); font-weight: 700; }
+.card-content h2, .card-content h3 {
+  color: var(--accent);
+  font-size: 1.1rem;
+  margin: 1.5rem 0 0.8rem;
+  -webkit-text-fill-color: var(--accent);
+  background: none;
+}
+.card-content blockquote {
+  border-left: 3px solid var(--gold);
+  padding: 0.5rem 1rem;
+  margin: 1rem 0;
+  background: rgba(212, 163, 115, 0.05);
+  border-radius: 0 8px 8px 0;
+  font-style: italic;
+}
+
+/* Image */
+.card-image {
+  margin-top: 1.5rem;
+  border-radius: 12px;
+  overflow: hidden;
+  position: relative;
+}
+
+.card-image img {
+  width: 100%;
+  display: block;
+  transition: transform 0.6s;
+  cursor: pointer;
+}
+
+.card-image:hover img { transform: scale(1.05); }
+
+/* Expand/collapse */
+.card-content.collapsed {
+  max-height: 200px;
+  overflow: hidden;
+  position: relative;
+}
+
+.card-content.collapsed::after {
+  content: '';
+  position: absolute;
+  bottom: 0; left: 0;
+  width: 100%; height: 80px;
+  background: linear-gradient(to top, var(--card), transparent);
+  pointer-events: none;
+}
+
+.expand-btn {
+  display: inline-block;
+  margin-top: 1rem;
+  padding: 0.5rem 1.5rem;
+  background: rgba(212, 163, 115, 0.1);
+  border: 1px solid var(--gold);
+  color: var(--gold);
+  border-radius: 50px;
+  cursor: pointer;
+  font-family: 'Noto Serif TC', serif;
+  font-size: 0.85rem;
+  transition: all 0.3s;
+}
+
+.expand-btn:hover {
+  background: rgba(212, 163, 115, 0.2);
+  transform: translateY(-2px);
+}
+
+/* Tags */
+.card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1.5rem;
+}
+
+.tag {
+  font-family: 'Inter', sans-serif;
+  font-size: 0.7rem;
+  padding: 0.3rem 0.8rem;
+  background: rgba(124, 91, 245, 0.15);
+  border: 1px solid rgba(124, 91, 245, 0.3);
+  border-radius: 50px;
+  color: var(--accent);
+  letter-spacing: 1px;
+}
+
+/* Footer */
+.footer {
+  text-align: center;
+  padding: 6rem 2rem 3rem;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.footer-quote {
+  font-size: 1.2rem;
+  color: var(--gold);
+  margin-bottom: 2rem;
+  font-style: italic;
+}
+
+/* Lightbox */
+.lightbox {
+  display: none;
+  position: fixed;
+  top: 0; left: 0;
+  width: 100%; height: 100%;
+  background: rgba(0,0,0,0.9);
+  z-index: 1000;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+}
+
+.lightbox.active { display: flex; }
+
+.lightbox img {
+  max-width: 90%;
+  max-height: 90vh;
+  border-radius: 12px;
+  box-shadow: 0 0 80px rgba(212, 163, 115, 0.2);
+}
+
+/* Floating particles */
+.particle {
+  position: fixed;
+  width: 4px; height: 4px;
+  background: var(--gold);
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 0;
+  animation: float linear infinite;
+}
+
+@keyframes float {
+  0% { opacity: 0; transform: translateY(100vh) rotate(0deg); }
+  10% { opacity: 0.6; }
+  90% { opacity: 0.6; }
+  100% { opacity: 0; transform: translateY(-100px) rotate(720deg); }
+}
+</style>
+</head>
+<body>
+
+<!-- Floating particles -->
+<div id="particles"></div>
+
+<!-- Lightbox -->
+<div class="lightbox" id="lightbox" onclick="this.classList.remove('active')">
+  <img id="lightbox-img" src="" alt="">
+</div>
+
+<!-- Hero -->
+<section class="hero">
+  <div class="hero-day">DAILY IMPROVEMENT JOURNEY</div>
+  <h1>日精進</h1>
+  <p class="hero-subtitle">每一天，都是蛻變的起點。<br>記錄覺察、成長與行動的軌跡。</p>
+  <div class="scroll-hint">
+    <span></span>
+  </div>
+</section>
+
+<!-- Counter -->
+<section class="counter-section">
+  <div class="counter-number" id="dayCounter">0</div>
+  <div class="counter-label">天不間斷</div>
+</section>
+
+<!-- Timeline -->
+<section class="timeline" id="timeline"></section>
+
+<!-- Footer -->
+<section class="footer">
+  <div class="footer-quote">「靈魂擺渡者 — 渡人渡己、行雲流水」</div>
+  <p>Gary Lee 的日精進旅程 · 始於 Day 1 · 持續中</p>
+</section>
+
+<script>
+const SUPABASE_URL = 'https://acrkclmderqewcwugsnl.supabase.co';
+const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFjcmtjbG1kZXJxZXdjd3Vnc25sIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NjI1NzQzMCwiZXhwIjoyMDgxODMzNDMwfQ.ZCQl_0dsfPdkG43zQsF47lbbhA6ybiGLa2fw0zSKGzQ';
+const TAG_DAILY = '29705b07-fde6-493b-970b-ef9938b080a8';
+
+// Tag name mapping
+const tagNames = {
+  '斷捨離': '斷捨離', '自我成長': '自我成長', '習慣養成': '習慣養成',
+  '心靈排毒': '心靈排毒', '正念飲食': '正念飲食', '維度提升': '維度提升',
+  '時間解放': '時間解放', 'AI賦能': 'AI賦能', '好好生活': '好好生活',
+  'M型社會': 'M型社會', '人機協作': '人機協作', '指揮官思維': '指揮官思維',
+  '心態轉變': '心態轉變'
+};
+
+function extractDayNumber(title) {
+  const m = title.match(/第(\d+)天/);
+  return m ? parseInt(m[1]) : 0;
+}
+
+function extractSubtitle(html) {
+  const m = html.match(/<h2[^>]*>(.*?)<\/h2>/);
+  if (m) return m[1].replace(/日精進 Day \d+[：:]\s*/, '');
+  return '';
+}
+
+function formatDate(dateStr) {
+  const d = new Date(dateStr);
+  const months = ['一月','二月','三月','四月','五月','六月','七月','八月','九月','十月','十一月','十二月'];
+  return `${d.getFullYear()} 年 ${months[d.getMonth()]} ${d.getDate()} 日`;
+}
+
+function stripFirstH2(html) {
+  return html.replace(/<h2[^>]*>.*?<\/h2>/, '');
+}
+
+function openLightbox(src) {
+  document.getElementById('lightbox-img').src = src;
+  document.getElementById('lightbox').classList.add('active');
+}
+
+function animateCounter(target) {
+  const el = document.getElementById('dayCounter');
+  let current = 0;
+  const step = Math.ceil(target / 60);
+  const timer = setInterval(() => {
+    current += step;
+    if (current >= target) { current = target; clearInterval(timer); }
+    el.textContent = current;
+  }, 30);
+}
+
+// Create particles
+function createParticles() {
+  const container = document.getElementById('particles');
+  for (let i = 0; i < 15; i++) {
+    const p = document.createElement('div');
+    p.className = 'particle';
+    p.style.left = Math.random() * 100 + '%';
+    p.style.animationDuration = (15 + Math.random() * 20) + 's';
+    p.style.animationDelay = (Math.random() * 15) + 's';
+    p.style.width = p.style.height = (2 + Math.random() * 3) + 'px';
+    container.appendChild(p);
+  }
+}
+
+// IntersectionObserver for scroll animations
+function setupObserver() {
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        e.target.classList.add('visible');
+      }
+    });
+  }, { threshold: 0.15 });
+
+  document.querySelectorAll('.entry').forEach(el => observer.observe(el));
+  
+  // Counter animation
+  const counterObs = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        const maxDay = Math.max(...window._dayNumbers || [804]);
+        animateCounter(maxDay);
+        counterObs.disconnect();
+      }
+    });
+  });
+  counterObs.observe(document.querySelector('.counter-section'));
+}
+
+async function loadEntries() {
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/tasks?select=*&tags=cs.{${TAG_DAILY}}&order=start_date.asc`,
+      { headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${SUPABASE_KEY}` } }
+    );
+    let data = await res.json();
+    data = data.filter(t => t.title && t.title.includes('日精進'));
+    
+    window._dayNumbers = data.map(d => extractDayNumber(d.title));
+    
+    const timeline = document.getElementById('timeline');
+    
+    data.forEach((entry, i) => {
+      const dayNum = extractDayNumber(entry.title);
+      const subtitle = extractSubtitle(entry.description || '');
+      const content = stripFirstH2(entry.description || '');
+      const dateStr = formatDate(entry.start_date);
+      const images = entry.images || [];
+      
+      // Filter valid images (skip expired S3 URLs)
+      const validImages = images.filter(url => !url.includes('prod-files-secure'));
+      
+      const el = document.createElement('div');
+      el.className = 'entry';
+      
+      el.innerHTML = `
+        <div class="card">
+          <div class="card-day">DAY ${dayNum}</div>
+          <div class="card-date">${dateStr}</div>
+          ${subtitle ? `<h2>${subtitle}</h2>` : `<h2>${entry.title}</h2>`}
+          <div class="card-content collapsed" id="content-${i}">
+            ${content}
+          </div>
+          <button class="expand-btn" onclick="toggleContent(${i})">展開全文 ✦</button>
+          ${validImages.length > 0 ? validImages.map(url => `
+            <div class="card-image">
+              <img src="${url}" alt="Day ${dayNum}" loading="lazy" onclick="openLightbox('${url}')">
+            </div>
+          `).join('') : ''}
+        </div>
+      `;
+      
+      timeline.appendChild(el);
+    });
+    
+    setupObserver();
+  } catch (err) {
+    console.error('Failed to load:', err);
+    document.getElementById('timeline').innerHTML = '<p style="text-align:center;color:var(--text-dim)">載入中...</p>';
+  }
+}
+
+function toggleContent(i) {
+  const el = document.getElementById(`content-${i}`);
+  const btn = el.parentElement.querySelector('.expand-btn');
+  if (el.classList.contains('collapsed')) {
+    el.classList.remove('collapsed');
+    btn.textContent = '收合 ✦';
+  } else {
+    el.classList.add('collapsed');
+    btn.textContent = '展開全文 ✦';
+  }
+}
+
+createParticles();
+loadEntries();
+</script>
+</body>
+</html>
