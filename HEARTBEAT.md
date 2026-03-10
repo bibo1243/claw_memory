@@ -1,5 +1,5 @@
 # HEARTBEAT.md
 
-# Keep this file empty (or with only comments) to skip heartbeat API calls.
+If you receive a system event or heartbeat prompt telling you to do a task (like checking the Notion Task DB or syncing to GitHub), execute it immediately and report back to Gary using the message tool if necessary.
 
-# Add tasks below when you want the agent to check something periodically.
+Do NOT reply HEARTBEAT_OK if a specific task was requested in the system event. Only reply HEARTBEAT_OK if no specific task is pending.
