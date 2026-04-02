@@ -1,27 +1,45 @@
 ---
 name: shared-skills
-description: 雙機協同核心：同步本地 Skills 到 Google Drive (gaa_all/.agent/skills)，讓雲端 Bot 可以下載並學習新能力。
+description: 多 IDE / 多電腦協同核心：以 GitHub repo 的 skills/ 作為唯一來源，同步到各 agent 的本地技能目錄，避免 VS Code、Codex、Trae、OpenClaw 各自漂移。
 ---
 
 # 共享技能 (Shared Skills)
 
-此技能負責將本地的 `skills/` 目錄與 Google Drive 上的 `gaa_all/.agent/skills` 進行同步。這是 "GaaClaw" (地端) 與 "gaa1243" (雲端) 共享能力的關鍵通道。
+此技能負責維護共用 skill 技能庫，並將 GitHub repo 中的 `skills/` 同步到不同 IDE / agent 的本地技能目錄。
 
-## 功能
+目前的權威來源是：
 
-### 1. 推送技能 (Push)
-- 指令：`shared-skills push <skill_name>` 或 `shared-skills push --all`
-- 作用：將本地的指定 Skill（或全部）上傳到 Google Drive。
-- 覆蓋規則：Drive 上的舊版本將被覆蓋。
+- GitHub repo: `https://github.com/bibo1243/claw_memory.git`
+- Canonical path: repo root 下的 `skills/`
 
-### 2. 拉取技能 (Pull)
-- 指令：`shared-skills pull <skill_name>` 或 `shared-skills pull --all`
-- 作用：從 Google Drive 下載指定 Skill（或全部）到本地 `skills/`。
-- 應用：雲端 Bot 啟動時或收到通知時執行，以獲取最新能力。
+## 核心規則
 
-## 依賴
-- Google Drive API (共用 `shared-memory` 的憑證與邏輯)
-- `gaa_all` 資料夾權限
+1. 不要在多個 IDE 的本地 skill 目錄各自直接手改。
+2. 所有正式 skill 都先改 GitHub repo 裡的 `skills/<skill-name>/`。
+3. 各 agent 只做 `pull` 後同步，或用 symlink 掛到 repo。
+4. 若某個 agent 不支援 symlink，就用同步腳本覆蓋本地 skill 目錄。
+5. 若某個 skill 僅屬某一平台，仍可放在同一 repo，但需在 `SKILL.md` 裡寫清楚適用平台。
 
-## 檔案結構
-- `scripts/sync_skills.py`: 主程式，處理上傳/下載邏輯。
+## 推薦流程
+
+### 1. 編輯
+
+- 在 GitHub repo 的 `skills/` 內新增或修改 skill。
+- skill 至少要有 `SKILL.md`；需要 UI metadata 時加 `agents/openai.yaml`。
+
+### 2. 發布
+
+- commit
+- push 到 GitHub
+
+### 3. 其他 agent / 其他電腦同步
+
+- 在本機 clone `claw_memory`
+- 執行 `scripts/sync_git_skills.sh <target-dir>`
+- 或把 agent 的 skills 目錄直接 symlink 到 repo 的 `skills/`
+
+## 先讀這個
+
+在操作前，先讀 [references/github-skill-library.md](references/github-skill-library.md)。
+
+若要直接同步，請使用 [scripts/sync_git_skills.sh](scripts/sync_git_skills.sh)，不要每個 IDE 手動複製。

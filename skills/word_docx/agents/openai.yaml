@@ -1,0 +1,7 @@
+interface:
+  display_name: "DOCX Word 文件專家"
+  short_description: "Read and generate Word documents safely"
+  default_prompt: "Use $word_docx to read or generate DOCX files while preserving structure, styles, numbering, revisions, and compatibility."
+
+policy:
+  allow_implicit_invocation: true

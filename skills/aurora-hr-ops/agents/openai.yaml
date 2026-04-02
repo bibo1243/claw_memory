@@ -1,0 +1,7 @@
+interface:
+  display_name: "Aurora HR Ops"
+  short_description: "Aurora HR teaching cards, LINE admin, and work scheduling"
+  default_prompt: "Use $aurora-hr-ops to build Aurora HR teaching cards, manage LINE mobile-account permissions, or operate verified work scheduling flows including 4-week cycle scheduling and ba000 multi-segment day edits."
+
+policy:
+  allow_implicit_invocation: true

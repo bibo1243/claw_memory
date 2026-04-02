@@ -1,0 +1,7 @@
+interface:
+  display_name: "Aurora 排班操作器"
+  short_description: "Stable HRHB007S00 single-day shift edits"
+  default_prompt: "Use $aurora-hr-schedule-operator to assign one or more employees to a specific shift on a specific date in HRHB007S00 and verify the save."
+
+policy:
+  allow_implicit_invocation: true
