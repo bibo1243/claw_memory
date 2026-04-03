@@ -34,6 +34,7 @@
 | **`shared_memory_system`** | **共享記憶系統**<br>多智能體協作的核心知識庫。管理技能註冊、經驗記錄、通訊機制，確保 Trae 與 Antigravity 等 AI 實例能共享知識與記憶。 | 2026-03-08 |
 | **`erjia-schedule-converter`** | **兒家班表轉檔**<br>專門將兒家班表 PDF 轉成可編輯的 Excel，保留日期、班別、多行儲存格、白/紅/藍底語意與排班規則，適合兒家、保育、生輔股輪值表分析與復刻。 | 2026-03-29 |
 | **`skill_directory_manager`** | **Skill Directory Manager**<br>負責維護「Agent Skills 總目錄表」。只要有新增、刪除或修改任何 Skill，必須確保同步更新目錄。 | 2026-03-03 |
+| **`skill-discovery-policy`** | **Skill Discovery Policy**<br>管理多 IDE / 多 agent 的技能檢索規則。定義 GitHub skills 為唯一權威來源、何時可快速檢索、何時必須完整掃描，以及回答技能存在與否時的固定格式。 | 2026-04-03 |
 | **`smart_goal_reviewer`** | **SMART Goal Reviewer**<br>運用 SMART 原則審核年度目標的具體性、可衡量性、可達成性、相關性與時限性。 | 2026-03-04 |
 | **`star_office_ui`** | **Star Office UI Manager**<br>管理像素辦公室看板 (Star Office UI)，同步 Agent 狀態與昨日小記。 | 2026-03-02 |
 | **`super_individual_manager`** | **Super Individual Archive Manager**<br>負責追蹤與記錄 Gary 的個人反思、成長與身心健康軌跡，存入超級個體檔案庫。 | 2026-03-03 |
