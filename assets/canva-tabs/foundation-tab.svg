@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="180" height="520" viewBox="0 0 180 520" fill="none">
+  <defs>
+    <filter id="shadow" x="0" y="0" width="180" height="520" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="-6" dy="8" stdDeviation="10" flood-color="#B37C61" flood-opacity="0.22"/>
+    </filter>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="520" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F2C4A8"/>
+      <stop offset="1" stop-color="#E5A884"/>
+    </linearGradient>
+  </defs>
+  <g filter="url(#shadow)">
+    <path d="M18 18H140C151.046 18 160 26.9543 160 38V482C160 493.046 151.046 502 140 502H18C8.05888 502 0 493.941 0 484V36C0 26.0589 8.05887 18 18 18Z" fill="url(#paper)"/>
+  </g>
+  <text x="79" y="88" font-family="PingFang TC, Songti TC, sans-serif" font-size="42" font-weight="600" fill="#FFFDF8" text-anchor="middle">
+    <tspan x="79" dy="0">慈</tspan>
+    <tspan x="79" dy="48">光</tspan>
+    <tspan x="79" dy="48">基</tspan>
+    <tspan x="79" dy="48">金</tspan>
+    <tspan x="79" dy="48">會</tspan>
+  </text>
+</svg>
