@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="180" height="520" viewBox="0 0 180 520" fill="none">
+  <defs>
+    <filter id="shadow" x="0" y="0" width="180" height="520" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="-6" dy="8" stdDeviation="10" flood-color="#698AA7" flood-opacity="0.22"/>
+    </filter>
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="520" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#8EB7D7"/>
+      <stop offset="1" stop-color="#5E88B5"/>
+    </linearGradient>
+  </defs>
+  <g filter="url(#shadow)">
+    <path d="M18 18H140C151.046 18 160 26.9543 160 38V482C160 493.046 151.046 502 140 502H18C8.05888 502 0 493.941 0 484V36C0 26.0589 8.05887 18 18 18Z" fill="url(#paper)"/>
+  </g>
+  <text x="79" y="20" font-family="PingFang TC, Songti TC, sans-serif" font-size="31" font-weight="700" fill="#F8FCFF" text-anchor="middle">
+    <tspan x="79" dy="0">慈</tspan>
+    <tspan x="79" dy="37">光</tspan>
+    <tspan x="79" dy="37">社</tspan>
+    <tspan x="79" dy="37">區</tspan>
+    <tspan x="79" dy="37">心</tspan>
+    <tspan x="79" dy="37">理</tspan>
+    <tspan x="79" dy="37">諮</tspan>
+    <tspan x="79" dy="37">商</tspan>
+    <tspan x="79" dy="37">所</tspan>
+  </text>
+</svg>
