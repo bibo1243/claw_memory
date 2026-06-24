@@ -424,43 +424,54 @@ const App = (() => {
       throw new Error('missing_api_key');
     }
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GOOGLE_GEMINI_MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        contents: [
-          {
-            role: 'user',
-            parts: [
+    const models = [GOOGLE_GEMINI_MODEL, 'gemini-1.5-flash'];
+    let lastError = null;
+
+    for (const model of models) {
+      try {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            contents: [
               {
-                text: `${systemPrompt}\n\n${userPrompt}`
+                role: 'user',
+                parts: [
+                  {
+                    text: `${systemPrompt}\n\n${userPrompt}`
+                  }
+                ]
               }
-            ]
-          }
-        ],
-        generationConfig: {
-          temperature: 0.4,
-          responseMimeType: 'application/json'
+            ],
+            generationConfig: {
+              temperature: 0.4,
+              responseMimeType: 'application/json'
+            }
+          })
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`google_ai_request_failed:${response.status}:${errorText}`);
         }
-      })
-    });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`google_ai_request_failed:${response.status}:${errorText}`);
+        const result = await response.json();
+        const text = (result && result.candidates && result.candidates[0] && result.candidates[0].content && result.candidates[0].content.parts)
+          ? result.candidates[0].content.parts.map(function(part) { return part.text || ''; }).join('').trim()
+          : '';
+        if (!text) {
+          throw new Error('google_ai_empty_response');
+        }
+
+        return JSON.parse(text);
+      } catch (error) {
+        console.error(`Google AI call with model ${model} failed:`, error);
+        lastError = error;
+      }
     }
-
-    const result = await response.json();
-    const text = (result && result.candidates && result.candidates[0] && result.candidates[0].content && result.candidates[0].content.parts)
-      ? result.candidates[0].content.parts.map(function(part) { return part.text || ''; }).join('').trim()
-      : '';
-    if (!text) {
-      throw new Error('google_ai_empty_response');
-    }
-
-    return JSON.parse(text);
+    throw lastError || new Error('google_ai_failed_all_models');
   }
 
   async function generateAiJournalPolish(text) {
@@ -485,10 +496,18 @@ const App = (() => {
   async function generateAiJournalKeywords(text) {
     const existingKeywords = getAllUniqueKeywords();
     const existingStr = existingKeywords.length > 0
-      ? `我們目前已經有使用的關鍵字庫：[${existingKeywords.join(', ')}]。請優先從這些關鍵字中挑選適合的。如果沒有適合的，再自行發明。`
-      : '';
+      ? `我們目前已經有使用的關鍵字庫為：[${existingKeywords.join(', ')}]。請仔細分析日記內容，並「優先」且「儘可能」從已有的關鍵字庫中挑選最符合日記主題的關鍵字（完全相同字樣的字詞）。如果已有庫中確實沒有適合的，你才可以自己創造新的關鍵字。`
+      : '請自行根據日記內容創造適合的關鍵字。';
     return callGoogleAiJson(
-      `你是中文 SEO 編輯。${existingStr}請從日記中抽出 3 到 6 個最重要、可當作 SEO 標籤的繁體中文關鍵字。每個關鍵字請控制在 2 到 6 個字，不能是完整句子。輸出 JSON：{"keywords":["..."]}。`,
+      `你是中文 SEO 編輯與主題標籤設計師。請從日記中抽出 3 到 6 個最重要、可當作 SEO 標籤的繁體中文關鍵字。
+每個關鍵字請控制在 2 到 8 個字之間，不能是完整句子或太長的片語。
+
+${existingStr}
+
+請務必返回 JSON 格式，例如：
+{
+  "keywords": ["關鍵字1", "關鍵字2", "關鍵字3"]
+}`,
       `請抽取這篇日記的關鍵字：\n${text}`
     );
   }
