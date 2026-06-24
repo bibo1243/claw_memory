@@ -638,7 +638,7 @@ const App = (() => {
     );
   }
   function getAllUniqueKeywords() {
-    const journals = Storage.getJournals();
+    const journals = Storage.load().journalEntries || [];
     const unique = new Set();
     journals.forEach(j => {
       if (Array.isArray(j.keywords)) {
