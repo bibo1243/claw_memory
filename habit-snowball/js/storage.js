@@ -222,7 +222,21 @@ const Storage = (() => {
   }
 
   function getActiveAuthors() {
+    const saved = localStorage.getItem('active-global-authors');
+    if (saved) {
+      try {
+        const arr = JSON.parse(saved);
+        if (Array.isArray(arr)) return arr;
+      } catch (e) {
+        console.error('Failed to parse active-global-authors:', e);
+      }
+    }
     return ['小葦', '小花'];
+  }
+
+  function setActiveAuthors(authors) {
+    if (!Array.isArray(authors)) return;
+    localStorage.setItem('active-global-authors', JSON.stringify(authors));
   }
 
   function filterByActiveAuthor(recordsOrEntries, isJournal = false) {
@@ -446,7 +460,8 @@ const Storage = (() => {
     updateJournalEntry,
     removeJournalEntry,
     getJournalEntries,
-    getActiveAuthors
+    getActiveAuthors,
+    setActiveAuthors
   };
 })();
 

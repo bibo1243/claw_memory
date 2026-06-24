@@ -1093,14 +1093,24 @@ ${existingStr}
   }
 
   function getJournalDayMap(entries) {
-    const sortedAsc = [...entries].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
-    const uniqueDates = [];
+    const authorGroups = {};
+    entries.forEach(entry => {
+      const author = entry.author || '小葦';
+      if (!authorGroups[author]) authorGroups[author] = [];
+      authorGroups[author].push(entry);
+    });
+
     const dayMap = new Map();
 
-    sortedAsc.forEach(entry => {
-      const key = getDateKey(entry.createdAt);
-      if (!uniqueDates.includes(key)) uniqueDates.push(key);
-      dayMap.set(entry.id, uniqueDates.indexOf(key) + 1);
+    Object.keys(authorGroups).forEach(author => {
+      const groupEntries = authorGroups[author];
+      const sortedAsc = [...groupEntries].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+      const uniqueDates = [];
+      sortedAsc.forEach(entry => {
+        const key = getDateKey(entry.createdAt);
+        if (!uniqueDates.includes(key)) uniqueDates.push(key);
+        dayMap.set(entry.id, uniqueDates.indexOf(key) + 1);
+      });
     });
 
     return dayMap;
@@ -1114,9 +1124,13 @@ ${existingStr}
     if (!currentDateEl || !currentDayEl || !listEl) return;
 
     const entries = Storage.getJournalEntries();
-    const dayMap = getJournalDayMap(entries);
+    const allEntries = Storage.load().journalEntries || [];
+    const dayMap = getJournalDayMap(allEntries);
+
+    const loginIdentity = localStorage.getItem('login-identity') || '小葦';
+    const authorEntries = allEntries.filter(entry => (entry.author || '小葦') === loginIdentity);
     const selectedDateKey = getDateKey(getSelectedJournalDate());
-    const uniqueDates = [...new Set(entries.map(entry => getDateKey(entry.createdAt)))].sort();
+    const uniqueDates = [...new Set(authorEntries.map(entry => getDateKey(entry.createdAt)))].sort();
     const selectedDayNumber = uniqueDates.includes(selectedDateKey)
       ? uniqueDates.indexOf(selectedDateKey) + 1
       : uniqueDates.filter(date => date < selectedDateKey).length + 1;
@@ -1628,18 +1642,19 @@ ${existingStr}
       return;
     }
 
-    if (getGoogleApiKey()) {
+    if (getGoogleApiKey() || ollamaStatus === 'connected') {
       try {
         const aiResult = await generateAiJournalPolish(sourceText);
         const aiText = normalizeEditorText((aiResult ? aiResult.polished : '') || '');
         if (aiText) {
           document.getElementById('journal-input').innerHTML = markdownToHtml(aiText);
-          Animations.toast('已使用 Google AI 完成潤稿', 'success');
+          const source = ollamaStatus === 'connected' ? '本地 AI (gemma4)' : 'Google AI';
+          Animations.toast(`已使用 ${source} 完成潤稿`, 'success');
           return;
         }
       } catch (error) {
-        console.error('Google AI polish failed:', error);
-        updateGoogleApiKeyStatus('Google AI 潤稿失敗，已改用本地規則。', true);
+        console.error('AI polish failed:', error);
+        updateGoogleApiKeyStatus('AI 潤稿失敗，已改用本地規則。', true);
       }
     }
 
@@ -1658,7 +1673,7 @@ ${existingStr}
       return;
     }
 
-    if (getGoogleApiKey()) {
+    if (getGoogleApiKey() || ollamaStatus === 'connected') {
       try {
         const aiResult = await generateAiJournalKeywords(sourceText);
         const aiKeywords = (aiResult && Array.isArray(aiResult.keywords))
@@ -1666,12 +1681,13 @@ ${existingStr}
           : [];
         if (aiKeywords.length) {
           updateJournalKeywordPanel(aiKeywords);
-          Animations.toast('已使用 Google AI 產生關鍵字', 'success');
+          const source = ollamaStatus === 'connected' ? '本地 AI (gemma4)' : 'Google AI';
+          Animations.toast(`已使用 ${source} 產生關鍵字`, 'success');
           return;
         }
       } catch (error) {
-        console.error('Google AI keywords failed:', error);
-        updateGoogleApiKeyStatus('Google AI 關鍵字生成失敗，已改用本地規則。', true);
+        console.error('AI keywords failed:', error);
+        updateGoogleApiKeyStatus('AI 關鍵字生成失敗，已改用本地規則。', true);
       }
     }
 
@@ -1688,7 +1704,7 @@ ${existingStr}
     }
 
     let generatedTitle = '';
-    if (getGoogleApiKey()) {
+    if (getGoogleApiKey() || ollamaStatus === 'connected') {
       try {
         const aiResult = await generateAiJournalTitle(text);
         const aiTitle = normalizeEditorText((aiResult ? aiResult.title : '') || '');
@@ -1696,8 +1712,8 @@ ${existingStr}
           generatedTitle = `${formatZhDate(getSelectedJournalDate())}-${aiTitle}`;
         }
       } catch (error) {
-        console.error('Google AI title failed:', error);
-        updateGoogleApiKeyStatus('Google AI 主題生成失敗，已改用本地規則。', true);
+        console.error('AI title failed:', error);
+        updateGoogleApiKeyStatus('AI 主題生成失敗，已改用本地規則。', true);
       }
     }
 
@@ -2007,8 +2023,8 @@ ${existingStr}
       return;
     }
     
-    if (!getGoogleApiKey()) {
-      Animations.toast('請先至「設定」頁面填寫 Google AI API Key', 'error');
+    if (!getGoogleApiKey() && ollamaStatus !== 'connected') {
+      Animations.toast('請先連線至本地 AI 或填寫 Google AI API Key', 'error');
       return;
     }
     
@@ -2020,7 +2036,8 @@ ${existingStr}
           aiSummary: summaryText
         });
         renderAll();
-        Animations.toast('已成功生成 AI 對話總結', 'success');
+        const source = ollamaStatus === 'connected' ? '本地 AI (gemma4)' : 'Google AI';
+        Animations.toast(`已成功生成 ${source} 對話總結`, 'success');
       } else {
         throw new Error('empty_summary');
       }
@@ -2155,8 +2172,25 @@ ${existingStr}
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
-  function handleGlobalAuthorToggle() {
-    // no-op to lock active status on both authors
+  function handleGlobalAuthorToggle(e) {
+    const btn = e.currentTarget;
+    if (!btn) return;
+    const author = btn.dataset.author;
+    let active = Storage.getActiveAuthors();
+
+    if (active.includes(author)) {
+      active = active.filter(a => a !== author);
+    } else {
+      active.push(author);
+    }
+
+    Storage.setActiveAuthors(active);
+
+    document.querySelectorAll('.g-author-btn').forEach(b => {
+      b.classList.toggle('active', active.includes(b.dataset.author));
+    });
+
+    renderAll();
   }
 
   function handleSaveGoogleApiKey() {
