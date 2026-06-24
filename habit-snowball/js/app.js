@@ -533,7 +533,7 @@ const App = (() => {
     if (useOllama && targetOllamaUrl) {
       let timeoutId = null;
       try {
-        console.log(`Connecting to local Ollama via Tunnel: ${targetOllamaUrl}, using model: gemma4:e4b`);
+        console.log(`Connecting to local Ollama via Tunnel: ${targetOllamaUrl}, using model: gemma4:e2b`);
         const cleanUrl = targetOllamaUrl.replace(/\/$/, '');
         const controller = new AbortController();
         timeoutId = setTimeout(() => {
@@ -548,7 +548,7 @@ const App = (() => {
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            model: 'gemma4:e4b',
+            model: 'gemma4:e2b',
             messages: [
               { role: 'system', content: systemPrompt },
               { role: 'user', content: userPrompt }
@@ -573,7 +573,7 @@ const App = (() => {
           throw new Error('Ollama returned empty response content');
         }
 
-        console.log('Successfully completed call using Ollama model gemma4:e4b via Tunnel');
+        console.log('Successfully completed call using Ollama model gemma4:e2b via Tunnel');
         return JSON.parse(content);
       } catch (ollamaError) {
         if (timeoutId) clearTimeout(timeoutId);
