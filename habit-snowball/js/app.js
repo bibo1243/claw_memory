@@ -1044,6 +1044,12 @@ const App = (() => {
     });
   }
 
+  function setJournalPage(page) {
+    journalCurrentPage = page;
+    renderJournal();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
   function renderWeeklyChart() {
     const canvas = document.getElementById('weekly-chart');
     if (!canvas) return;
