@@ -1,0 +1,2227 @@
+/**
+ * Habit Snowball — Main Application
+ * 主應用邏輯：UI 渲染、事件處理、狀態管理
+ */
+
+const App = (() => {
+  let data;
+  let currentView = 'home';
+  let pendingAction = null;
+  let awarenessTimer = null;
+  let awarenessTimeLeft = 10;
+  let awarenessHabitId = null;
+  let journalDraftKeywords = [];
+  let isGoogleApiKeyVisible = false;
+  let selectedJournalDate = new Date();
+  let editingJournalEntryId = null;
+  let expandedJournalEntryIds = new Set();
+  let isRunningJournalAi = false;
+  let editingRecordId = null;
+  let isJournalDatePickerOpen = false;
+  let journalCurrentPage = 1;
+  const journalPageSize = 5;
+
+  const WEEKDAY_LABELS = ['日', '一', '二', '三', '四', '五', '六'];
+  const GOOGLE_API_KEY_STORAGE_KEY = 'habit-snowball-google-api-key';
+  const GOOGLE_GEMINI_MODEL = 'gemini-2.5-flash';
+  const KEYWORD_STOP_WORDS = new Set([
+    '今天', '自己', '一個', '一些', '因為', '所以', '如果', '但是', '然後',
+    '這樣', '那個', '這個', '還有', '可以', '需要', '開始', '完成', '覺得',
+    '真的', '進行', '目前', '以及', '我們', '你們', '他們', '不是', '沒有',
+    '已經', '就是', '事情', '時候', '自己', '比較', '讓自己', '習慣雪球'
+  ]);
+  const TITLE_FILLER_PATTERNS = [
+    /^今天[^，。:：]*[，,：:]\s*/,
+    /^我發現[^，。:：]*[，,：:]\s*/,
+    /^我覺得[^，。:：]*[，,：:]\s*/,
+    /^這篇文章[^，。:：]*[，,：:]\s*/,
+    /^這篇日記[^，。:：]*[，,：:]\s*/
+  ];
+
+  function htmlToMarkdown(html) {
+    if (!html || !html.trim()) return '';
+    let md = html;
+    md = md.replace(/<ol[^>]*>\s*([\s\S]*?)<\/ol>/gi, (_, inner) =>
+      inner.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_li, item) => `${normalizeEditorText(item.replace(/<[^>]+>/g, '')) ? '1. ' : '1. '}${item.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').trim()}\n`)
+    );
+    md = md.replace(/<ul[^>]*>\s*([\s\S]*?)<\/ul>/gi, (_, inner) =>
+      inner.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_li, item) => `- ${item.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '').trim()}\n`)
+    );
+    md = md.replace(/<(b|strong)[^>]*>(.*?)<\/(b|strong)>/gi, '**$2**');
+    md = md.replace(/<br\s*\/?>/gi, '\n');
+    md = md.replace(/<\/p>\s*<p[^>]*>/gi, '\n\n');
+    md = md.replace(/<p[^>]*>/gi, '');
+    md = md.replace(/<\/p>/gi, '');
+    md = md.replace(/<\/div>\s*<div[^>]*>/gi, '\n');
+    md = md.replace(/<div[^>]*>/gi, '');
+    md = md.replace(/<\/div>/gi, '');
+    md = md.replace(/<[^>]+>/g, '');
+    md = md.replace(/&nbsp;/g, ' ');
+    md = md.replace(/&amp;/g, '&');
+    md = md.replace(/&lt;/g, '<');
+    md = md.replace(/&gt;/g, '>');
+    md = md.replace(/\n{3,}/g, '\n\n');
+    return md.trim();
+  }
+
+  function markdownToHtml(md) {
+    if (!md) return '';
+    let html = md.replace(/<[^>]+>/g, '');
+    html = html.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    const lines = html.split('\n');
+    const result = [];
+    let inList = false;
+    let listType = null;
+    let listStart = 1;
+
+    lines.forEach(line => {
+      const orderedMatch = line.match(/^(\d+)\.\s?(.*)$/);
+      const bulletMatch = line.match(/^- (.*)$/);
+
+      if (orderedMatch) {
+        if (!inList || listType !== 'ol') {
+          if (inList) result.push(listType === 'ol' ? '</ol>' : '</ul>');
+          listType = 'ol';
+          listStart = parseInt(orderedMatch[1], 10) || 1;
+          result.push(`<ol start="${listStart}">`);
+          inList = true;
+        }
+        result.push(`<li>${orderedMatch[2] || ''}</li>`);
+      } else if (bulletMatch) {
+        if (!inList || listType !== 'ul') {
+          if (inList) result.push(listType === 'ol' ? '</ol>' : '</ul>');
+          result.push('<ul>');
+          listType = 'ul';
+          inList = true;
+        }
+        result.push(`<li>${bulletMatch[1] || ''}</li>`);
+      } else {
+        if (inList) {
+          result.push(listType === 'ol' ? '</ol>' : '</ul>');
+          inList = false;
+          listType = null;
+        }
+        if (line.trim()) result.push(`<p>${line}</p>`);
+      }
+    });
+
+    if (inList) result.push(listType === 'ol' ? '</ol>' : '</ul>');
+    return result.join('');
+  }
+
+  function escapeHtml(text) {
+    return (text || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function formatZhDate(dateLike) {
+    const date = new Date(dateLike);
+    return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, '0')}.${String(date.getDate()).padStart(2, '0')}（${WEEKDAY_LABELS[date.getDay()]}）`;
+  }
+
+  function formatDateInputValue(dateLike) {
+    const date = new Date(dateLike);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  }
+
+  function getDateKey(dateLike) {
+    return formatDateInputValue(dateLike);
+  }
+
+  function normalizeEditorText(raw) {
+    return (raw || '')
+      .replace(/\u00a0/g, ' ')
+      .replace(/\r/g, '')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  function splitIntoThoughts(text) {
+    return normalizeEditorText(text)
+      .split(/\n+|(?<=[。！？!?；;])/)
+      .map(part => part.trim())
+      .filter(Boolean);
+  }
+
+  function getSelectedJournalDate() {
+    return new Date(selectedJournalDate);
+  }
+
+  function setSelectedJournalDate(dateLike) {
+    const nextDate = new Date(dateLike);
+    if (Number.isNaN(nextDate.getTime())) return;
+    selectedJournalDate = startOfDay(nextDate);
+
+    const dateInput = document.getElementById('journal-date-input');
+    const dateLabel = document.getElementById('journal-current-date');
+    if (dateInput) dateInput.value = formatDateInputValue(selectedJournalDate);
+    if (dateLabel) dateLabel.textContent = formatZhDate(selectedJournalDate);
+  }
+
+  function addDays(dateLike, days) {
+    const date = startOfDay(dateLike);
+    date.setDate(date.getDate() + days);
+    return date;
+  }
+
+  function extractKeywords(text, limit = 5) {
+    const normalizedText = normalizeEditorText(text);
+    const matches = normalizedText.match(/[\u4e00-\u9fffA-Za-zA-Z0-9]{2,8}/g) || [];
+    const counts = new Map();
+
+    matches.forEach(token => {
+      const normalized = token.toLowerCase();
+      if (KEYWORD_STOP_WORDS.has(token) || KEYWORD_STOP_WORDS.has(normalized)) return;
+      if (token.length > 8) return;
+      counts.set(token, (counts.get(token) || 0) + 1);
+    });
+
+    const phrases = normalizedText.match(/[\u4e00-\u9fff]{2,6}/g) || [];
+    phrases.forEach(phrase => {
+      if (KEYWORD_STOP_WORDS.has(phrase)) return;
+      if (phrase.length < 2 || phrase.length > 6) return;
+      counts.set(phrase, (counts.get(phrase) || 0) + 1);
+    });
+
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1] || b[0].length - a[0].length)
+      .slice(0, limit)
+      .map(([keyword]) => keyword);
+  }
+
+  function summarizeSentenceForTitle(sentence) {
+    let output = normalizeEditorText(sentence);
+    TITLE_FILLER_PATTERNS.forEach(pattern => {
+      output = output.replace(pattern, '');
+    });
+    output = output.replace(/[。！？!?；;]+$/g, '').trim();
+    output = output.replace(/^(因此|所以|但是|而且|然後)\s*/, '').trim();
+    return output;
+  }
+
+  function generateJournalSummary(text) {
+    const blocks = normalizeEditorText(text).split(/\n{2,}/).map(block => block.trim()).filter(Boolean);
+    const sentences = splitIntoThoughts(text)
+      .map(item => item.replace(/^[\-•\d.、\s]+/, '').trim())
+      .filter(Boolean);
+    const candidates = [...blocks, ...sentences].map(summarizeSentenceForTitle).filter(Boolean);
+    const best = candidates.find(item => item.length >= 8 && item.length <= 24)
+      || candidates.find(item => item.length >= 6)
+      || '';
+
+    if (best) return best.slice(0, 24);
+
+    const keywords = extractKeywords(text, 3);
+    if (keywords.length >= 2) return `${keywords[0]}：${keywords[1]}`;
+    if (keywords.length === 1) return keywords[0];
+    return '未命名日記';
+  }
+
+  function generateJournalTitle(text, dateLike = new Date()) {
+    return `${formatZhDate(dateLike)}-${generateJournalSummary(text)}`;
+  }
+
+  function polishJournalText(text) {
+    const normalized = normalizeEditorText(text);
+    if (!normalized) return '';
+
+    const lines = normalized.split('\n');
+    const result = [];
+    let paragraphBuffer = [];
+
+    function flushParagraph() {
+      if (!paragraphBuffer.length) return;
+      result.push(paragraphBuffer.join(' ').replace(/\s+/g, ' ').trim());
+      paragraphBuffer = [];
+    }
+
+    lines.forEach(rawLine => {
+      const line = rawLine.trim();
+      if (!line) {
+        flushParagraph();
+        if (result[result.length - 1] !== '') result.push('');
+        return;
+      }
+
+      if (/^(\d+)\.\s/.test(line) || /^- /.test(line)) {
+        flushParagraph();
+        result.push(line);
+        return;
+      }
+
+      paragraphBuffer.push(line);
+    });
+
+    flushParagraph();
+
+    return result
+      .join('\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  function getGoogleApiKey() {
+    try {
+      return (localStorage.getItem(GOOGLE_API_KEY_STORAGE_KEY) || '').trim();
+    } catch (error) {
+      console.error('Failed to load Google API key:', error);
+      return '';
+    }
+  }
+
+  function saveGoogleApiKey(apiKey) {
+    localStorage.setItem(GOOGLE_API_KEY_STORAGE_KEY, apiKey.trim());
+  }
+
+  function clearGoogleApiKey() {
+    localStorage.removeItem(GOOGLE_API_KEY_STORAGE_KEY);
+  }
+
+  function updateGoogleApiKeyStatus(message = '', isError = false) {
+    const statusEl = document.getElementById('google-api-key-status-msg');
+    if (!statusEl) return;
+    statusEl.style.display = message ? 'block' : 'none';
+    statusEl.style.color = isError ? 'var(--accent-negative)' : 'var(--accent-1)';
+    statusEl.textContent = message;
+  }
+
+  function hydrateGoogleApiKeyInput() {
+    const input = document.getElementById('google-api-key-input');
+    const toggleBtn = document.getElementById('btn-toggle-google-api-key');
+    if (!input || !toggleBtn) return;
+
+    const savedKey = getGoogleApiKey();
+    input.value = savedKey;
+    input.type = isGoogleApiKeyVisible ? 'text' : 'password';
+    toggleBtn.textContent = isGoogleApiKeyVisible ? '隱藏' : '顯示';
+    updateGoogleApiKeyStatus(savedKey ? '已載入本機儲存的 Google API Key' : '');
+    updateJournalAiMode();
+  }
+
+  function updateJournalAiMode() {
+    const modeEl = document.getElementById('journal-ai-mode');
+    if (!modeEl) return;
+    modeEl.textContent = getGoogleApiKey() ? 'Google AI 已啟用' : '本地模式';
+  }
+
+  function setJournalAiButtonsDisabled(disabled, label) {
+    const buttonIds = [
+      'btn-journal-polish',
+      'btn-journal-keywords',
+      'btn-journal-title',
+      'btn-journal-run-all'
+    ];
+
+    buttonIds.forEach(id => {
+      const button = document.getElementById(id);
+      if (!button) return;
+      button.disabled = disabled;
+      if (id === 'btn-journal-run-all') {
+        button.textContent = disabled ? (label || '生成中...') : '一鍵生成';
+      }
+    });
+  }
+
+  function saveCaretPosition(context) {
+    var selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return null;
+    var range = selection.getRangeAt(0);
+    var preSelectionRange = range.cloneRange();
+    preSelectionRange.selectNodeContents(context);
+    preSelectionRange.setEnd(range.startContainer, range.startOffset);
+    var start = preSelectionRange.toString().length;
+    return {
+      start: start,
+      end: start + range.toString().length
+    };
+  }
+
+  function restoreCaretPosition(context, savedSel) {
+    if (!savedSel) return;
+    var selection = window.getSelection();
+    if (!selection) return;
+    var charIndex = 0;
+    var range = document.createRange();
+    range.setStart(context, 0);
+    range.collapse(true);
+    var nodeStack = [context], node, foundStart = false, stop = false;
+
+    while (!stop && (node = nodeStack.pop())) {
+      if (node.nodeType === 3) {
+        var nextCharIndex = charIndex + node.length;
+        if (!foundStart && savedSel.start >= charIndex && savedSel.start <= nextCharIndex) {
+          range.setStart(node, savedSel.start - charIndex);
+          foundStart = true;
+        }
+        if (foundStart && savedSel.end >= charIndex && savedSel.end <= nextCharIndex) {
+          range.setEnd(node, savedSel.end - charIndex);
+          stop = true;
+        }
+        charIndex = nextCharIndex;
+      } else {
+        var i = node.childNodes.length;
+        while (i--) {
+          nodeStack.push(node.childNodes[i]);
+        }
+      }
+    }
+
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  function setupWysiwygEditor(editorEl) {
+    if (!editorEl) return;
+    if (editorEl.dataset.wysiwygSetup === 'true') return;
+    editorEl.dataset.wysiwygSetup = 'true';
+
+    editorEl.addEventListener('keydown', function(e) {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        document.execCommand('bold', false, null);
+        var evt = document.createEvent('HTMLEvents');
+        evt.initEvent('input', true, true);
+        editorEl.dispatchEvent(evt);
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'i') {
+        e.preventDefault();
+        document.execCommand('italic', false, null);
+        var evt = document.createEvent('HTMLEvents');
+        evt.initEvent('input', true, true);
+        editorEl.dispatchEvent(evt);
+      }
+    });
+
+    editorEl.addEventListener('input', function() {
+      var html = editorEl.innerHTML;
+      var markdown = htmlToMarkdown(html);
+      
+      var hasFormattingPattern = /(^|\n)(\d+\.\s|- )|\*\*[^\*]+\*\*|\*[^\*]+\*/.test(markdown);
+      if (!hasFormattingPattern) return;
+
+      var nextHtml = markdownToHtml(markdown);
+      if (nextHtml !== html) {
+        var savedSel = saveCaretPosition(editorEl);
+        editorEl.innerHTML = nextHtml;
+        restoreCaretPosition(editorEl, savedSel);
+      }
+    });
+  }
+
+  function autoFormatJournalOutline() {
+    // Deprecated: replaced by setupWysiwygEditor
+  }
+
+  async function callGoogleAiJson(systemPrompt, userPrompt) {
+    const apiKey = getGoogleApiKey();
+    if (!apiKey) {
+      throw new Error('missing_api_key');
+    }
+
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${GOOGLE_GEMINI_MODEL}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                text: `${systemPrompt}\n\n${userPrompt}`
+              }
+            ]
+          }
+        ],
+        generationConfig: {
+          temperature: 0.4,
+          responseMimeType: 'application/json'
+        }
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`google_ai_request_failed:${response.status}:${errorText}`);
+    }
+
+    const result = await response.json();
+    const text = (result && result.candidates && result.candidates[0] && result.candidates[0].content && result.candidates[0].content.parts)
+      ? result.candidates[0].content.parts.map(function(part) { return part.text || ''; }).join('').trim()
+      : '';
+    if (!text) {
+      throw new Error('google_ai_empty_response');
+    }
+
+    return JSON.parse(text);
+  }
+
+  async function generateAiJournalPolish(text) {
+    return callGoogleAiJson(
+      '你是中文日記編輯。請把使用者原文潤成更順、更清楚、保留原意的繁體中文內容。必須保留原本的段落結構：一段文字就維持一段，原本是條列式就維持條列式。若是條列內容，請整理成 markdown 可辨識的大綱格式，例如 1. 2. 3. 或 - 。輸出 JSON：{"polished":"..."}，不要輸出其他內容。',
+      `請潤稿這篇日記：\n${text}`
+    );
+  }
+
+  async function generateAiJournalKeywords(text) {
+    return callGoogleAiJson(
+      '你是中文 SEO 編輯。請從日記中抽出 3 到 6 個最重要、可當作 SEO 標籤的繁體中文關鍵字。每個關鍵字請控制在 2 到 6 個字，不能是完整句子。輸出 JSON：{"keywords":["..."]}。',
+      `請抽取這篇日記的關鍵字：\n${text}`
+    );
+  }
+
+  async function generateAiJournalTitle(text) {
+    return callGoogleAiJson(
+      '你是中文編輯。請根據整篇文章內容做總結，生成一個精煉、具主題感的繁體中文標題。不要照抄第一句，不要包含日期，標題長度控制在 10 到 24 個字。輸出 JSON：{"title":"..."}。',
+      `請為這篇日記生成標題摘要：\n${text}`
+    );
+  }
+
+  function startOfDay(dateLike) {
+    const date = new Date(dateLike);
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  }
+
+  function getDayDiff(fromDate, toDate) {
+    return Math.floor((startOfDay(toDate) - startOfDay(fromDate)) / (1000 * 60 * 60 * 24));
+  }
+
+  function recomputeStatsFromRecords(records) {
+    const sorted = [...records].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    const stats = {
+      ...Storage.getDefaultData().stats
+    };
+
+    let runningPoints = 0;
+
+    sorted.forEach(record => {
+      runningPoints = Math.max(0, runningPoints + (record.points || 0));
+
+      if (record.action === 'resisted' || record.action === 'completed') {
+        stats.totalResisted += 1;
+
+        const recordDayIso = startOfDay(record.timestamp).toISOString();
+        if (!stats.lastActiveDate) {
+          stats.currentStreak = 1;
+          stats.lastActiveDate = recordDayIso;
+        } else {
+          const diffDays = getDayDiff(stats.lastActiveDate, record.timestamp);
+          if (diffDays === 0) {
+            stats.lastActiveDate = recordDayIso;
+          } else if (diffDays === 1) {
+            stats.currentStreak += 1;
+            stats.lastActiveDate = recordDayIso;
+          } else {
+            stats.currentStreak = 1;
+            stats.lastActiveDate = recordDayIso;
+          }
+        }
+        stats.longestStreak = Math.max(stats.longestStreak, stats.currentStreak);
+      }
+
+      if (record.action === 'relapsed') {
+        stats.currentStreak = 0;
+      }
+    });
+
+    stats.totalPoints = runningPoints;
+
+    if (stats.lastActiveDate) {
+      const streakResult = ScoringEngine.updateStreak(stats.lastActiveDate, stats.currentStreak);
+      if (streakResult.updated) {
+        stats.currentStreak = streakResult.currentStreak;
+        stats.lastActiveDate = streakResult.lastActiveDate;
+        stats.longestStreak = Math.max(stats.longestStreak, stats.currentStreak);
+      }
+    }
+
+    return stats;
+  }
+
+  function rebuildHabitDerivedFields(habits, records) {
+    return habits.map(habit => ({
+      ...habit,
+      totalActions: records.filter(record => record.habitId === habit.id).length
+    }));
+  }
+
+  async function init() {
+    var loginIdentity = localStorage.getItem('login-identity');
+    if (!loginIdentity) {
+      var overlay = document.getElementById('identity-picker-overlay');
+      if (overlay) {
+        overlay.style.display = 'flex';
+      }
+      return;
+    }
+    localStorage.setItem('last-selected-author', loginIdentity);
+
+    // Apply saved theme preference (default to light)
+    var savedTheme = localStorage.getItem('theme-preference') || 'light';
+    applyTheme(savedTheme);
+
+    await Storage.hydrateFromRemote();
+    data = Storage.load();
+    setSelectedJournalDate(new Date());
+
+    var lastAuthor = loginIdentity;
+    document.querySelectorAll('.author-btn').forEach(function(btn) {
+      btn.classList.toggle('active', btn.dataset.author === lastAuthor);
+    });
+
+    var activeAuthors = Storage.getActiveAuthors();
+    document.querySelectorAll('.g-author-btn').forEach(function(btn) {
+      btn.classList.toggle('active', activeAuthors.includes(btn.dataset.author));
+    });
+
+    updateActiveStats();
+
+    var streakResult = ScoringEngine.updateStreak(
+      activeStats.lastActiveDate,
+      activeStats.currentStreak
+    );
+    if (streakResult.updated) {
+      activeStats.currentStreak = streakResult.currentStreak;
+      activeStats.lastActiveDate = streakResult.lastActiveDate;
+      if (streakResult.currentStreak > (activeStats.longestStreak || 0)) {
+        activeStats.longestStreak = streakResult.currentStreak;
+      }
+      Storage.updateStats(activeStats);
+    }
+
+    var canvas = document.getElementById('snowball-canvas');
+    if (canvas) SnowballVis.init(canvas);
+
+    var stage = ScoringEngine.getStage(activeStats.totalPoints);
+    SnowballVis.setPoints(activeStats.totalPoints);
+    SnowballVis.setStage(stage);
+    SnowballVis.start();
+
+    renderAll();
+    bindEvents();
+
+    Storage.setSyncCallback(renderAll);
+    Storage.startSync();
+
+    var syncUserInput = document.getElementById('sync-user-input');
+    if (syncUserInput) {
+      var urlParams = new URLSearchParams(window.location.search);
+      var user = urlParams.get('user') || localStorage.getItem('simulated-current-user') || 'default';
+      syncUserInput.value = user === 'default' ? '' : user;
+    }
+
+    hydrateGoogleApiKeyInput();
+
+    if (data.habits.length === 0) {
+      showOnboarding();
+    }
+  }
+
+  function selectLoginIdentity(author) {
+    localStorage.setItem('login-identity', author);
+    localStorage.setItem('last-selected-author', author);
+    var overlay = document.getElementById('identity-picker-overlay');
+    if (overlay) {
+      overlay.style.display = 'none';
+    }
+    init();
+  }
+
+  function applyTheme(theme) {
+    var toggleBtnIcon = document.querySelector('#btn-theme-toggle .theme-icon');
+    if (theme === 'light') {
+      document.body.classList.add('light-theme');
+      if (toggleBtnIcon) toggleBtnIcon.textContent = '🌙';
+    } else {
+      document.body.classList.remove('light-theme');
+      if (toggleBtnIcon) toggleBtnIcon.textContent = '☀️';
+    }
+    localStorage.setItem('theme-preference', theme);
+  }
+
+  function toggleTheme() {
+    var isLight = document.body.classList.contains('light-theme');
+    applyTheme(isLight ? 'dark' : 'light');
+  }
+
+  let activeStats = null;
+
+  function updateActiveStats() {
+    const activeAuthor = localStorage.getItem('last-selected-author') || '小葦';
+    
+    // Filter records for the active author, also applying start date limit for Xiaohua
+    const activeRecords = data.records.filter(r => {
+      const author = r.author || '小葦';
+      if (author !== activeAuthor) return false;
+      if (activeAuthor === '小花') {
+        const recordDate = new Date(r.timestamp);
+        const startDate = new Date('2026-06-23T00:00:00+08:00');
+        if (recordDate < startDate) return false;
+      }
+      return true;
+    });
+
+    activeStats = recomputeStatsFromRecords(activeRecords);
+  }
+
+  function renderAll() {
+    data = Storage.load();
+    updateActiveStats();
+    renderScore();
+    renderStage();
+    renderHabits();
+    renderHistory();
+    renderJournal();
+    renderStats();
+    renderWeeklyChart();
+  }
+
+  function renderScore() {
+    const scoreEl = document.getElementById('total-score');
+    const oldScore = parseInt(scoreEl.textContent.replace(/,/g, ''), 10) || 0;
+    if (oldScore !== activeStats.totalPoints) {
+      Animations.countUp(scoreEl, oldScore, activeStats.totalPoints);
+    } else {
+      scoreEl.textContent = activeStats.totalPoints.toLocaleString();
+    }
+  }
+
+  function renderStage() {
+    const stage = ScoringEngine.getStage(activeStats.totalPoints);
+    const progress = ScoringEngine.getStageProgress(activeStats.totalPoints);
+
+    document.getElementById('stage-name').textContent = `${stage.emoji} ${stage.name}`;
+    document.getElementById('stage-progress-fill').style.width = `${progress}%`;
+    document.getElementById('stage-progress-fill').style.background =
+      `linear-gradient(90deg, ${stage.color1}, ${stage.color2})`;
+
+    const nextEl = document.getElementById('next-stage-info');
+    if (stage.nextPoints) {
+      nextEl.textContent = `距離下一階段還需 ${stage.nextPoints - activeStats.totalPoints} 分`;
+    } else {
+      nextEl.textContent = '🏆 已達最高階段！';
+    }
+
+    SnowballVis.setPoints(activeStats.totalPoints);
+    SnowballVis.setStage(stage);
+    document.documentElement.style.setProperty('--accent-1', stage.color1);
+    document.documentElement.style.setProperty('--accent-2', stage.color2);
+  }
+
+  function renderHabits() {
+    const container = document.getElementById('habits-list');
+    if (!container) return;
+
+    if (data.habits.length === 0) {
+      container.innerHTML = `
+        <div class="empty-state">
+          <p>還沒有習慣，點擊下方新增第一個！</p>
+        </div>
+      `;
+      return;
+    }
+
+    container.innerHTML = data.habits.map(habit => {
+      const habitRecords = Storage.getRecordsForHabit(habit.id);
+      const resistCount = habitRecords.filter(r =>
+        r.action === 'resisted' || r.action === 'completed'
+      ).length;
+      const nextPts = ScoringEngine.getResistPoints(resistCount + 1);
+
+      return `
+        <div class="habit-card" data-habit-id="${habit.id}">
+          <div class="habit-header">
+            <span class="habit-emoji">${habit.emoji}</span>
+            <div class="habit-info">
+              <h3 class="habit-name">${habit.name}</h3>
+              <span class="habit-count">${habit.type === 'resist' ? '已進化' : '已完成'} ${resistCount} 次 · 下次 +${nextPts}</span>
+            </div>
+            <button class="habit-delete" onclick="App.deleteHabit('${habit.id}')" title="刪除">×</button>
+          </div>
+          <div class="habit-actions">
+            ${habit.type === 'resist' ? `
+              <button class="action-btn action-resist" onclick="App.promptAction('${habit.id}', 'resisted')">
+                <span class="action-icon">🧬</span>
+                <span>進化了</span>
+              </button>
+              <button class="action-btn action-urge" onclick="App.startAwareness('${habit.id}')">
+                <span class="action-icon">⚡</span>
+                <span>起念頭</span>
+              </button>
+              <button class="action-btn action-relapse" onclick="App.promptAction('${habit.id}', 'relapsed')">
+                <span class="action-icon">💔</span>
+                <span>破戒了</span>
+              </button>
+            ` : `
+              <button class="action-btn action-resist" onclick="App.promptAction('${habit.id}', 'completed')">
+                <span class="action-icon">✅</span>
+                <span>做到了</span>
+              </button>
+              <button class="action-btn action-urge" onclick="App.startAwareness('${habit.id}')">
+                <span class="action-icon">⚡</span>
+                <span>想偷懶</span>
+              </button>
+              <button class="action-btn action-relapse" onclick="App.promptAction('${habit.id}', 'relapsed')">
+                <span class="action-icon">❌</span>
+                <span>沒做到</span>
+              </button>
+            `}
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function renderHistory() {
+    const container = document.getElementById('history-list');
+    if (!container) return;
+
+    const records = Storage.getRecentRecords(15);
+    if (records.length === 0) {
+      container.innerHTML = '<div class="empty-state"><p>還沒有記錄</p></div>';
+      return;
+    }
+
+    container.innerHTML = records.map(record => {
+      const habit = data.habits.find(h => h.id === record.habitId);
+      const habitName = habit ? habit.name : '已刪除的習慣';
+      const habitEmoji = habit ? habit.emoji : '❓';
+      const d = new Date(record.timestamp);
+      const timeStr = `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+
+      const actionLabels = {
+        resisted: '進化了',
+        completed: '做到了',
+        urge: '念起了',
+        relapsed: '破戒了'
+      };
+
+      const actionClasses = {
+        resisted: 'positive',
+        completed: 'positive',
+        urge: 'warning',
+        relapsed: 'negative'
+      };
+
+      const hasNote = record.note && record.note.trim() !== '';
+      const noteHtml = hasNote ? `<div class="history-note">${markdownToHtml(record.note)}</div>` : '';
+      const toggleIcon = hasNote ? '<span class="history-note-toggle-icon">▶</span>' : '';
+
+      return `
+        <div class="history-item ${actionClasses[record.action]} ${hasNote ? 'has-note' : ''}" ${hasNote ? 'onclick="this.classList.toggle(\'expanded\')"' : ''}>
+          <div class="history-row">
+            <span class="history-emoji">${habitEmoji}</span>
+            <div class="history-info">
+              <span class="history-habit">${habitName}</span>
+              <span class="history-action">${actionLabels[record.action]}</span>
+            </div>
+            ${toggleIcon}
+            <span class="history-points ${record.points >= 0 ? 'positive' : 'negative'}">
+              ${record.points > 0 ? '+' : ''}${record.points}
+            </span>
+            <span class="history-time">${timeStr}</span>
+            <button class="history-delete-btn" onclick="event.stopPropagation();App.editRecord('${record.id}')" title="編輯這筆記錄">編輯</button>
+            <button class="history-delete-btn" onclick="event.stopPropagation();App.deleteRecord('${record.id}')" title="刪除此筆記錄">刪除</button>
+          </div>
+          ${noteHtml}
+        </div>
+      `;
+    }).join('');
+  }
+
+  function renderStats() {
+    document.getElementById('stat-streak').textContent = activeStats.currentStreak || 0;
+    document.getElementById('stat-longest').textContent = activeStats.longestStreak || 0;
+    document.getElementById('stat-resisted').textContent = activeStats.totalResisted || 0;
+
+    const todayRecords = Storage.getTodayRecords();
+    const todayPoints = todayRecords.reduce((sum, record) => sum + record.points, 0);
+    document.getElementById('stat-today').textContent = `${todayPoints > 0 ? '+' : ''}${todayPoints}`;
+
+    const streakBonusEl = document.getElementById('streak-bonus');
+    if (streakBonusEl) {
+      const bonus = ScoringEngine.getStreakBonus(activeStats.currentStreak);
+      if (bonus > 0) {
+        streakBonusEl.textContent = `每天額外 +${bonus}`;
+        streakBonusEl.style.display = 'inline-block';
+      } else {
+        streakBonusEl.style.display = 'none';
+      }
+    }
+  }
+
+  function getJournalDayMap(entries) {
+    const sortedAsc = [...entries].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+    const uniqueDates = [];
+    const dayMap = new Map();
+
+    sortedAsc.forEach(entry => {
+      const key = getDateKey(entry.createdAt);
+      if (!uniqueDates.includes(key)) uniqueDates.push(key);
+      dayMap.set(entry.id, uniqueDates.indexOf(key) + 1);
+    });
+
+    return dayMap;
+  }
+
+  function renderJournal() {
+    const currentDateEl = document.getElementById('journal-current-date');
+    const currentDayEl = document.getElementById('journal-current-day');
+    const listEl = document.getElementById('journal-list');
+    const paginationEl = document.getElementById('journal-pagination');
+    if (!currentDateEl || !currentDayEl || !listEl) return;
+
+    const entries = Storage.getJournalEntries();
+    const dayMap = getJournalDayMap(entries);
+    const selectedDateKey = getDateKey(getSelectedJournalDate());
+    const uniqueDates = [...new Set(entries.map(entry => getDateKey(entry.createdAt)))].sort();
+    const selectedDayNumber = uniqueDates.includes(selectedDateKey)
+      ? uniqueDates.indexOf(selectedDateKey) + 1
+      : uniqueDates.filter(date => date < selectedDateKey).length + 1;
+
+    currentDateEl.textContent = formatZhDate(getSelectedJournalDate());
+    currentDayEl.textContent = `第 ${selectedDayNumber} 天`;
+
+    syncJournalEditingState();
+
+    if (entries.length === 0) {
+      listEl.innerHTML = `
+        <div class="empty-state journal-empty-state">
+          <p>從第 1 天開始，留下今天的精進紀錄。</p>
+        </div>
+      `;
+      if (paginationEl) paginationEl.innerHTML = '';
+      return;
+    }
+
+    // 1. Keyword search filtering
+    const searchInput = document.getElementById('journal-search-input');
+    const query = searchInput ? searchInput.value.trim().toLowerCase() : '';
+    let filteredEntries = entries;
+    if (query) {
+      filteredEntries = entries.filter(entry => {
+        const titleMatch = (entry.title || '').toLowerCase().indexOf(query) !== -1;
+        const contentMatch = (entry.content || '').toLowerCase().indexOf(query) !== -1;
+        const polishedMatch = (entry.polishedContent || '').toLowerCase().indexOf(query) !== -1;
+        const keywordMatch = (entry.keywords || []).some(k => k.toLowerCase().indexOf(query) !== -1);
+        const commentMatch = (entry.comments || []).some(c => (c.content || '').toLowerCase().indexOf(query) !== -1);
+        return titleMatch || contentMatch || polishedMatch || keywordMatch || commentMatch;
+      });
+    }
+
+    if (filteredEntries.length === 0) {
+      listEl.innerHTML = `
+        <div class="empty-state journal-empty-state">
+          <p>找不到符合「${escapeHtml(query)}」的日記紀錄。</p>
+        </div>
+      `;
+      if (paginationEl) paginationEl.innerHTML = '';
+      return;
+    }
+
+    // 2. Pagination calculation
+    const totalPages = Math.ceil(filteredEntries.length / journalPageSize);
+    if (journalCurrentPage > totalPages) {
+      journalCurrentPage = totalPages || 1;
+    }
+    if (journalCurrentPage < 1) {
+      journalCurrentPage = 1;
+    }
+
+    const startIndex = (journalCurrentPage - 1) * journalPageSize;
+    const endIndex = startIndex + journalPageSize;
+    const pageEntries = filteredEntries.slice(startIndex, endIndex);
+
+    // 3. Render page items
+    listEl.innerHTML = pageEntries.map(entry => {
+      const dayNumber = dayMap.get(entry.id) || 1;
+      const keywords = Array.isArray(entry.keywords) ? entry.keywords : [];
+      const author = entry.author || '小葦';
+      const authorIcon = author === '小花' ? '👩🏻' : '👦🏻';
+      const authorClass = author === '小花' ? 'author-tag-flower' : 'author-tag-wei';
+      
+      // Color-coding
+      const cardAuthorClass = author === '小花' ? 'card-flower' : 'card-wei';
+
+      // 4. Check for comments within last 24 hours
+      var newCommentAuthors = [];
+      var now = new Date();
+      var entryComments = Array.isArray(entry.comments) ? entry.comments : [];
+      entryComments.forEach(function(c) {
+        var commentTime = new Date(c.createdAt);
+        if (!isNaN(commentTime.getTime()) && (now - commentTime < 24 * 60 * 60 * 1000)) {
+          if (newCommentAuthors.indexOf(c.author) === -1) {
+            newCommentAuthors.push(c.author);
+          }
+        }
+      });
+      var newCommentBadgeHtml = '';
+      if (newCommentAuthors.length > 0) {
+        newCommentBadgeHtml = `<span class="new-comment-badge">💬 ${newCommentAuthors.join('、')}新回饋！</span>`;
+      }
+
+      // 5. Desktop expansion and toggle logic
+      var isDesktop = window.innerWidth > 768;
+      var isExpanded = isDesktop || expandedJournalEntryIds.has(entry.id);
+
+      // 6. Highlight search keyword
+      var rawTitle = entry.title || generateJournalTitle(entry.content || '', entry.createdAt);
+      var displayTitle = escapeHtml(rawTitle);
+      var displayContent = markdownToHtml(entry.polishedContent || entry.content || '');
+      if (query) {
+        displayTitle = highlightKeyword(displayTitle, query);
+        displayContent = highlightKeyword(displayContent, query);
+      }
+
+      return `
+        <div class="habit-card journal-entry-card ${cardAuthorClass}">
+          <div class="journal-entry-top">
+            <div>
+              <div class="journal-entry-day" style="display: flex; align-items: center; gap: 8px;">
+                <span>第 ${dayNumber} 天</span>
+                <span class="author-tag ${authorClass}">${authorIcon} ${author}</span>
+                ${newCommentBadgeHtml}
+              </div>
+              <div class="journal-entry-date">${formatZhDate(entry.createdAt)}</div>
+            </div>
+            <div class="journal-entry-actions">
+              <button class="history-delete-btn" onclick="App.editJournalEntry('${entry.id}')" title="編輯這篇日記">編輯</button>
+              <button class="history-delete-btn" onclick="App.deleteJournalEntry('${entry.id}')" title="刪除此篇日記">刪除</button>
+            </div>
+          </div>
+          <h3 class="journal-entry-title">${displayTitle}</h3>
+          ${keywords.length > 0 ? `
+            <div class="journal-keyword-list">
+              ${keywords.map(keyword => {
+                var displayKeyword = escapeHtml(keyword);
+                if (query) displayKeyword = highlightKeyword(displayKeyword, query);
+                return `<span class="journal-keyword-chip">${displayKeyword}</span>`;
+              }).join('')}
+            </div>
+          ` : ''}
+          ${isDesktop ? '' : `
+            <button class="journal-expand-btn" onclick="App.toggleJournalEntry('${entry.id}')">
+              ${isExpanded ? '收合內容' : '展開內容'}
+            </button>
+          `}
+          <div class="journal-entry-body ${isExpanded ? 'expanded' : 'collapsed'}" id="journal-entry-body-${entry.id}">
+            ${displayContent}
+            ${renderCommentsSection(entry, query)}
+          </div>
+          <div class="journal-card-actions">
+            <button class="btn btn-secondary journal-card-btn" onclick="App.editJournalEntry('${entry.id}')" title="編輯這篇日記">編輯這篇日記</button>
+            <button class="btn btn-secondary journal-card-btn journal-card-btn-danger" onclick="App.deleteJournalEntry('${entry.id}')" title="刪除此篇日記">刪除這篇日記</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    // 7. Render pagination controls
+    if (paginationEl) {
+      if (totalPages <= 1) {
+        paginationEl.innerHTML = '';
+      } else {
+        var paginationHtml = '';
+        paginationHtml += `<button class="pagination-btn" ${journalCurrentPage === 1 ? 'disabled' : ''} onclick="App.setJournalPage(${journalCurrentPage - 1})">上一頁</button>`;
+        for (var p = 1; p <= totalPages; p++) {
+          paginationHtml += `<button class="pagination-btn ${p === journalCurrentPage ? 'active' : ''}" onclick="App.setJournalPage(${p})">${p}</button>`;
+        }
+        paginationHtml += `<button class="pagination-btn" ${journalCurrentPage === totalPages ? 'disabled' : ''} onclick="App.setJournalPage(${journalCurrentPage + 1})">下一頁</button>`;
+        paginationEl.innerHTML = paginationHtml;
+      }
+    }
+
+    // 8. Register WYSIWYG editor on each comment box
+    document.querySelectorAll('.comment-content-input').forEach(function(el) {
+      setupWysiwygEditor(el);
+    });
+  }
+
+  function renderWeeklyChart() {
+    const canvas = document.getElementById('weekly-chart');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.parentElement.getBoundingClientRect();
+    canvas.width = rect.width * dpr;
+    canvas.height = 120 * dpr;
+    canvas.style.width = `${rect.width}px`;
+    canvas.style.height = '120px';
+    ctx.scale(dpr, dpr);
+
+    const w = rect.width;
+    const h = 120;
+    const weekData = Storage.getWeeklyData();
+    const labels = Object.keys(weekData);
+    const values = Object.values(weekData);
+    const maxVal = Math.max(...values, 1);
+
+    ctx.clearRect(0, 0, w, h);
+
+    const barWidth = (w - 40) / labels.length - 8;
+    const chartH = h - 35;
+
+    labels.forEach((label, i) => {
+      const x = 20 + i * ((w - 40) / labels.length) + 4;
+      const barH = (values[i] / maxVal) * chartH * 0.85;
+      const y = chartH - barH + 5;
+
+      const grd = ctx.createLinearGradient(x, y, x, chartH + 5);
+      if (values[i] >= 0) {
+        grd.addColorStop(0, 'rgba(52, 211, 153, 0.8)');
+        grd.addColorStop(1, 'rgba(52, 211, 153, 0.2)');
+      } else {
+        grd.addColorStop(0, 'rgba(239, 68, 68, 0.8)');
+        grd.addColorStop(1, 'rgba(239, 68, 68, 0.2)');
+      }
+
+      ctx.fillStyle = grd;
+      ctx.beginPath();
+      const radius = 4;
+      ctx.moveTo(x + radius, y);
+      ctx.lineTo(x + barWidth - radius, y);
+      ctx.quadraticCurveTo(x + barWidth, y, x + barWidth, y + radius);
+      ctx.lineTo(x + barWidth, chartH + 5);
+      ctx.lineTo(x, chartH + 5);
+      ctx.lineTo(x, y + radius);
+      ctx.quadraticCurveTo(x, y, x + radius, y);
+      ctx.fill();
+
+      if (values[i] !== 0) {
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '11px Inter, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(values[i] > 0 ? `+${values[i]}` : values[i], x + barWidth / 2, y - 5);
+      }
+
+      ctx.fillStyle = '#64748b';
+      ctx.font = '11px Inter, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(label, x + barWidth / 2, h - 5);
+    });
+  }
+
+  function startAwareness(habitId) {
+    const habit = data.habits.find(h => h.id === habitId);
+    if (!habit) return;
+
+    awarenessHabitId = habitId;
+    awarenessTimeLeft = 10;
+    document.getElementById('countdown-time').textContent = '10';
+    document.getElementById('countdown-bar').style.strokeDashoffset = '0';
+    document.getElementById('awareness-modal').classList.add('show');
+
+    if (awarenessTimer) clearInterval(awarenessTimer);
+
+    const startTime = Date.now();
+    const duration = 10000;
+
+    awarenessTimer = setInterval(() => {
+      const elapsed = Date.now() - startTime;
+      const remaining = Math.max(0, duration - elapsed);
+      awarenessTimeLeft = remaining / 1000;
+
+      document.getElementById('countdown-time').textContent = Math.ceil(awarenessTimeLeft);
+      const offset = 282.7 * (1 - remaining / duration);
+      document.getElementById('countdown-bar').style.strokeDashoffset = offset;
+
+      if (remaining <= 0) {
+        clearInterval(awarenessTimer);
+        awarenessTimer = null;
+        hideAwarenessModal();
+        promptAction(awarenessHabitId, 'urge');
+      }
+    }, 50);
+  }
+
+  function hideAwarenessModal() {
+    if (awarenessTimer) {
+      clearInterval(awarenessTimer);
+      awarenessTimer = null;
+    }
+    document.getElementById('awareness-modal').classList.remove('show');
+  }
+
+  function handleAwarenessSuccess() {
+    const habitId = awarenessHabitId;
+    hideAwarenessModal();
+    const habit = data.habits.find(h => h.id === habitId);
+    const action = habit && habit.type === 'build' ? 'completed' : 'resisted';
+    promptAction(habitId, action);
+  }
+
+  function promptAction(habitId, action) {
+    recordAction(habitId, action, '');
+  }
+
+  function submitNote() {
+    const editor = document.getElementById('note-input');
+    const noteMarkdown = htmlToMarkdown(editor.innerHTML);
+    if (editingRecordId) {
+      Storage.updateRecord(editingRecordId, { note: noteMarkdown });
+      renderAll();
+      Animations.toast('記錄已更新', 'success');
+    }
+    hideNoteModal();
+  }
+
+  function skipNote() {
+    hideNoteModal();
+  }
+
+  function hideNoteModal() {
+    document.getElementById('note-modal').classList.remove('show');
+    document.getElementById('note-input').innerHTML = '';
+    document.getElementById('btn-submit-note').textContent = '✦ 儲存';
+    document.getElementById('btn-cancel-note').textContent = '取消';
+    pendingAction = null;
+    editingRecordId = null;
+  }
+
+  function recordAction(habitId, action, note) {
+    const prevStage = ScoringEngine.getStage(activeStats.totalPoints);
+    const result = ScoringEngine.processAction(action, activeStats);
+
+    if (action === 'resisted' || action === 'completed') {
+      const streakResult = ScoringEngine.updateStreak(
+        activeStats.lastActiveDate,
+        result.newStats.currentStreak
+      );
+      result.newStats.currentStreak = streakResult.currentStreak;
+      result.newStats.lastActiveDate = streakResult.lastActiveDate;
+    }
+
+    const activeAuthor = localStorage.getItem('last-selected-author') || '小葦';
+    Storage.addRecord(habitId, action, result.points, result.breakdown, note || '', activeAuthor);
+    Storage.updateStats(result.newStats);
+
+    const heroEl = document.getElementById('hero-section');
+    if (result.points > 0) {
+      Animations.flyScore(heroEl, result.points, '#34d399');
+      SnowballVis.pulse(1.2);
+      const { x: cx, y: cy } = SnowballVis.getCenter();
+      ParticleSystem.spawnBurst(cx, cy, '#34d399', 20, true);
+    } else {
+      Animations.flyScore(heroEl, result.points, '#ef4444');
+      SnowballVis.shrink();
+      Animations.shake(heroEl, Math.abs(result.points));
+      const { x: cx, y: cy } = SnowballVis.getCenter();
+      ParticleSystem.spawnBurst(cx, cy, '#ef4444', 15, false);
+    }
+
+    const newStage = ScoringEngine.getStage(result.newStats.totalPoints);
+    if (newStage.id !== prevStage.id && result.points > 0) {
+      setTimeout(() => {
+        const { x: cx, y: cy } = SnowballVis.getCenter();
+        ParticleSystem.spawnCelebration(cx, cy);
+        Animations.stageUpCelebration(newStage.name, newStage.emoji);
+      }, 500);
+    }
+
+    const actionLabels = {
+      resisted: '🧬 進化了！',
+      completed: '✅ 做到了！',
+      urge: '😤 念起了...',
+      relapsed: '💔 下次加油'
+    };
+    const toastType = result.points > 0 ? 'success' : (result.points < -10 ? 'error' : 'warning');
+    Animations.toast(
+      `${actionLabels[action]} ${result.points > 0 ? '+' : ''}${result.points} 分`,
+      toastType
+    );
+
+    renderAll();
+  }
+
+  function addHabit(name, type, emoji) {
+    if (!name.trim()) return;
+    Storage.addHabit(name.trim(), type, emoji);
+    renderAll();
+    Animations.toast(`已新增「${name}」`, 'success');
+  }
+
+  function deleteHabit(habitId) {
+    const habit = data.habits.find(h => h.id === habitId);
+    if (!habit) return;
+    if (!confirm(`確定要刪除「${habit.name}」嗎？相關記錄也會被刪除。`)) return;
+
+    Storage.removeHabit(habitId);
+    const nextData = Storage.load();
+    nextData.stats = recomputeStatsFromRecords(nextData.records);
+    nextData.habits = rebuildHabitDerivedFields(nextData.habits, nextData.records);
+    Storage.replaceData(nextData);
+    renderAll();
+    Animations.toast(`已刪除「${habit.name}」`, 'info');
+  }
+
+  function deleteRecord(recordId) {
+    const record = data.records.find(item => item.id === recordId);
+    if (!record) return;
+    if (!confirm('確定要刪除這筆記錄嗎？系統會一併重算積分與連續天數。')) return;
+
+    const nextData = Storage.load();
+    nextData.records = nextData.records.filter(item => item.id !== recordId);
+    nextData.habits = rebuildHabitDerivedFields(nextData.habits, nextData.records);
+    nextData.stats = recomputeStatsFromRecords(nextData.records);
+    Storage.replaceData(nextData);
+    renderAll();
+    Animations.toast('已刪除記錄', 'info');
+  }
+
+  function editRecord(recordId) {
+    const record = data.records.find(item => item.id === recordId);
+    if (!record) return;
+
+    editingRecordId = record.id;
+    pendingAction = null;
+
+    document.getElementById('note-modal-emoji').textContent = '✏️';
+    document.getElementById('note-modal-title').textContent = '編輯記錄';
+    document.getElementById('note-modal-subtitle').textContent = '可修改這筆記錄的備註內容';
+    document.getElementById('btn-submit-note').textContent = '✦ 儲存修改';
+    document.getElementById('btn-cancel-note').textContent = '取消';
+
+    const editor = document.getElementById('note-input');
+    editor.innerHTML = markdownToHtml(record.note || '');
+    document.getElementById('note-modal').classList.add('show');
+    setTimeout(() => editor.focus(), 200);
+  }
+
+  function updateJournalKeywordPanel(keywords) {
+    const panel = document.getElementById('journal-keywords-panel');
+    if (!panel) return;
+
+    journalDraftKeywords = keywords;
+    if (!keywords.length) {
+      panel.style.display = 'none';
+      panel.innerHTML = '';
+      return;
+    }
+
+    panel.style.display = 'flex';
+    panel.innerHTML = keywords
+      .map(keyword => `<span class="journal-keyword-chip">${escapeHtml(keyword)}</span>`)
+      .join('');
+  }
+
+  function normalizeSeoKeywords(keywords, limit = 5) {
+    const unique = [];
+    keywords.forEach(keyword => {
+      const normalized = normalizeEditorText(String(keyword || ''))
+        .replace(/[，。,！!？?；;：:\s]+/g, '')
+        .slice(0, 8);
+      if (normalized.length < 2 || normalized.length > 8) return;
+      if (unique.includes(normalized)) return;
+      unique.push(normalized);
+    });
+    return unique.slice(0, limit);
+  }
+
+  function getJournalDraftText() {
+    const editor = document.getElementById('journal-input');
+    return normalizeEditorText(htmlToMarkdown((editor ? editor.innerHTML : '') || ''));
+  }
+
+  function syncJournalTitleHint() {
+    return;
+  }
+
+  function syncJournalEditingState() {
+    const banner = document.getElementById('journal-edit-banner');
+    const label = document.getElementById('journal-edit-label');
+    const saveBtn = document.getElementById('btn-journal-save');
+    const prevBtn = document.getElementById('btn-edit-prev-journal');
+    const nextBtn = document.getElementById('btn-edit-next-journal');
+    if (!banner || !label || !saveBtn) return;
+
+    if (!editingJournalEntryId) {
+      banner.style.display = 'none';
+      saveBtn.textContent = '儲存日記';
+      return;
+    }
+
+    const entry = Storage.getJournalEntries().find(item => item.id === editingJournalEntryId);
+    banner.style.display = 'flex';
+    label.textContent = entry ? `正在編輯：${entry.title || formatZhDate(entry.createdAt)}` : '正在編輯日記';
+    saveBtn.textContent = '更新日記';
+
+    const entries = Storage.getJournalEntries();
+    const currentIndex = entries.findIndex(item => item.id === editingJournalEntryId);
+    if (prevBtn) prevBtn.disabled = currentIndex <= 0;
+    if (nextBtn) nextBtn.disabled = currentIndex === -1 || currentIndex >= entries.length - 1;
+  }
+
+  async function handleJournalPolish() {
+    const polished = polishJournalText(getJournalDraftText());
+    const sourceText = getJournalDraftText();
+    if (!sourceText) {
+      Animations.toast('先寫一些內容再潤稿', 'warning');
+      return;
+    }
+
+    if (getGoogleApiKey()) {
+      try {
+        const aiResult = await generateAiJournalPolish(sourceText);
+        const aiText = normalizeEditorText((aiResult ? aiResult.polished : '') || '');
+        if (aiText) {
+          document.getElementById('journal-input').innerHTML = markdownToHtml(aiText);
+          Animations.toast('已使用 Google AI 完成潤稿', 'success');
+          return;
+        }
+      } catch (error) {
+        console.error('Google AI polish failed:', error);
+        updateGoogleApiKeyStatus('Google AI 潤稿失敗，已改用本地規則。', true);
+      }
+    }
+
+    if (!polished) {
+      Animations.toast('先寫一些內容再潤稿', 'warning');
+      return;
+    }
+    document.getElementById('journal-input').innerHTML = markdownToHtml(polished);
+    Animations.toast('已使用本地規則完成潤稿', 'success');
+  }
+
+  async function handleJournalKeywords() {
+    const sourceText = getJournalDraftText();
+    if (!sourceText) {
+      Animations.toast('先寫一些內容再生成關鍵字', 'warning');
+      return;
+    }
+
+    if (getGoogleApiKey()) {
+      try {
+        const aiResult = await generateAiJournalKeywords(sourceText);
+        const aiKeywords = (aiResult && Array.isArray(aiResult.keywords))
+          ? normalizeSeoKeywords(aiResult.keywords, 6)
+          : [];
+        if (aiKeywords.length) {
+          updateJournalKeywordPanel(aiKeywords);
+          Animations.toast('已使用 Google AI 產生關鍵字', 'success');
+          return;
+        }
+      } catch (error) {
+        console.error('Google AI keywords failed:', error);
+        updateGoogleApiKeyStatus('Google AI 關鍵字生成失敗，已改用本地規則。', true);
+      }
+    }
+
+    const keywords = extractKeywords(sourceText);
+    updateJournalKeywordPanel(keywords);
+    Animations.toast(keywords.length ? '已使用本地規則產生關鍵字' : '內容太少，暫時無法提取關鍵字', keywords.length ? 'success' : 'warning');
+  }
+
+  async function handleJournalTitle() {
+    const text = getJournalDraftText();
+    if (!text) {
+      Animations.toast('先寫一些內容再生成標題', 'warning');
+      return;
+    }
+
+    let generatedTitle = '';
+    if (getGoogleApiKey()) {
+      try {
+        const aiResult = await generateAiJournalTitle(text);
+        const aiTitle = normalizeEditorText((aiResult ? aiResult.title : '') || '');
+        if (aiTitle) {
+          generatedTitle = `${formatZhDate(getSelectedJournalDate())}-${aiTitle}`;
+        }
+      } catch (error) {
+        console.error('Google AI title failed:', error);
+        updateGoogleApiKeyStatus('Google AI 主題生成失敗，已改用本地規則。', true);
+      }
+    }
+
+    if (!generatedTitle) {
+      generatedTitle = generateJournalTitle(text, getSelectedJournalDate());
+    }
+
+    const titleInput = document.getElementById('journal-title-input');
+    if (titleInput) titleInput.value = generatedTitle;
+    syncJournalTitleHint();
+    Animations.toast('已生成主題標題', 'success');
+  }
+
+  async function handleJournalRunAll() {
+    const text = getJournalDraftText();
+    if (!text) {
+      Animations.toast('先寫一些內容再一鍵生成', 'warning');
+      return;
+    }
+    if (isRunningJournalAi) return;
+
+    isRunningJournalAi = true;
+    setJournalAiButtonsDisabled(true, '一鍵生成中...');
+    try {
+      await handleJournalPolish();
+      await handleJournalKeywords();
+      await handleJournalTitle();
+      Animations.toast('已完成 AI 一鍵生成', 'success');
+    } finally {
+      isRunningJournalAi = false;
+      setJournalAiButtonsDisabled(false);
+    }
+  }
+
+  function clearJournalDraft() {
+    const titleInput = document.getElementById('journal-title-input');
+    const editor = document.getElementById('journal-input');
+    if (titleInput) titleInput.value = '';
+    if (editor) editor.innerHTML = '';
+    updateJournalKeywordPanel([]);
+    setSelectedJournalDate(new Date());
+    editingJournalEntryId = null;
+    const lastAuthor = localStorage.getItem('last-selected-author') || '小葦';
+    document.querySelectorAll('.author-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.author === lastAuthor);
+    });
+    syncJournalTitleHint();
+    syncJournalEditingState();
+    hideJournalComposer();
+  }
+
+  function saveJournalEntry() {
+    const content = getJournalDraftText();
+    if (!content) {
+      Animations.toast('請先輸入日記內容', 'warning');
+      return;
+    }
+
+    const titleInput = document.getElementById('journal-title-input');
+    const entryDate = getSelectedJournalDate();
+    const title = (titleInput ? titleInput.value.trim() : '') || generateJournalTitle(content, entryDate);
+    const polishedContent = polishJournalText(content);
+    const keywords = journalDraftKeywords.length ? journalDraftKeywords : extractKeywords(content);
+    const wasEditing = Boolean(editingJournalEntryId);
+
+    const activeAuthorBtn = document.querySelector('.author-btn.active');
+    const selectedAuthor = activeAuthorBtn ? activeAuthorBtn.dataset.author : '小葦';
+
+    if (wasEditing) {
+      Storage.updateJournalEntry(editingJournalEntryId, {
+        title,
+        content,
+        polishedContent,
+        keywords,
+        author: selectedAuthor,
+        createdAt: entryDate.toISOString()
+      });
+    } else {
+      Storage.addJournalEntry({
+        title,
+        content,
+        polishedContent,
+        keywords,
+        author: selectedAuthor,
+        createdAt: entryDate.toISOString()
+      });
+    }
+
+    clearJournalDraft();
+    renderAll();
+    switchView('journal');
+    Animations.toast(wasEditing ? '日記已更新' : '日記已儲存', 'success');
+  }
+
+  function editJournalEntry(entryId) {
+    const entry = Storage.getJournalEntries().find(item => item.id === entryId);
+    if (!entry) return;
+
+    editingJournalEntryId = entry.id;
+    setSelectedJournalDate(entry.createdAt);
+
+    const titleInput = document.getElementById('journal-title-input');
+    const editor = document.getElementById('journal-input');
+    if (titleInput) titleInput.value = entry.title || '';
+    if (editor) editor.innerHTML = markdownToHtml(entry.content || entry.polishedContent || '');
+    updateJournalKeywordPanel(Array.isArray(entry.keywords) ? entry.keywords : []);
+    const currentAuthor = entry.author || '小葦';
+    document.querySelectorAll('.author-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.author === currentAuthor);
+    });
+    syncJournalTitleHint();
+    syncJournalEditingState();
+    switchView('journal');
+    showJournalComposer();
+    var journalInput = document.getElementById('journal-input');
+    if (journalInput) {
+      journalInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setTimeout(function() { journalInput.focus(); }, 250);
+    }
+  }
+
+  function toggleJournalEntry(entryId) {
+    if (expandedJournalEntryIds.has(entryId)) {
+      expandedJournalEntryIds.delete(entryId);
+    } else {
+      expandedJournalEntryIds.add(entryId);
+    }
+    renderJournal();
+  }
+
+  function deleteJournalEntry(entryId) {
+    const entry = Storage.getJournalEntries().find(item => item.id === entryId);
+    if (!entry) return;
+    if (!confirm(`確定要刪除「${entry.title || '這篇日記'}」嗎？`)) return;
+    Storage.removeJournalEntry(entryId);
+    renderAll();
+    Animations.toast('已刪除日記', 'info');
+  }
+
+  function showJournalComposer() {
+    var modal = document.getElementById('journal-composer-modal');
+    if (modal) modal.classList.add('show');
+  }
+
+  function hideJournalComposer() {
+    var modal = document.getElementById('journal-composer-modal');
+    if (modal) modal.classList.remove('show');
+  }
+
+  function selectCommentAuthor(btn) {
+    var selector = btn.parentElement;
+    var buttons = selector.querySelectorAll('.comment-author-btn');
+    for (var i = 0; i < buttons.length; i++) {
+      buttons[i].classList.toggle('active', buttons[i] === btn);
+    }
+  }
+
+  function selectCommentSticker(span, sticker) {
+    var picker = span.parentElement;
+    var container = picker.parentElement;
+    while (container && !container.classList.contains('add-comment-box')) {
+      container = container.parentElement;
+    }
+    if (!container) return;
+    
+    var hiddenInput = container.querySelector('.comment-selected-sticker');
+    var alreadySelected = span.classList.contains('selected');
+    
+    var options = picker.querySelectorAll('.sticker-select-option');
+    for (var i = 0; i < options.length; i++) {
+      options[i].classList.remove('selected');
+      options[i].style.background = 'transparent';
+    }
+    
+    if (alreadySelected) {
+      if (hiddenInput) hiddenInput.value = '';
+    } else {
+      span.classList.add('selected');
+      span.style.background = 'rgba(168, 216, 234, 0.3)';
+      if (hiddenInput) hiddenInput.value = sticker;
+    }
+  }
+
+  function toggleQuickTag(span) {
+    span.classList.toggle('active');
+    if (span.classList.contains('active')) {
+      span.style.background = 'rgba(168, 216, 234, 0.15)';
+      span.style.borderColor = 'rgba(168, 216, 234, 0.5)';
+      span.style.color = '#fff';
+    } else {
+      span.style.background = 'rgba(255,255,255,0.02)';
+      span.style.borderColor = 'var(--border-subtle)';
+      span.style.color = 'var(--text-secondary)';
+    }
+  }
+
+  function submitComment(entryId, triggerEl) {
+    var container = triggerEl;
+    while (container && !container.classList.contains('add-comment-box')) {
+      container = container.parentElement;
+    }
+    if (!container) return;
+    
+    var input = container.querySelector('.comment-content-input');
+    var content = '';
+    if (input) {
+      content = htmlToMarkdown(input.innerHTML).trim();
+    }
+    if (!content) {
+      Animations.toast('請輸入評論內容', 'warning');
+      return;
+    }
+    
+    var activeAuthorBtn = container.querySelector('.comment-author-btn.active');
+    var author = activeAuthorBtn ? activeAuthorBtn.getAttribute('data-comment-author') : '小葦';
+    
+    var stickerInput = container.querySelector('.comment-selected-sticker');
+    var sticker = stickerInput ? stickerInput.value : '';
+    
+    var tags = [];
+    var activeTags = container.querySelectorAll('.quick-tag-option.active');
+    for (var i = 0; i < activeTags.length; i++) {
+      var text = activeTags[i].textContent.split(' ')[0].trim();
+      tags.push(text);
+    }
+    
+    var customInput = container.querySelector('.comment-custom-tags');
+    var customText = customInput ? customInput.value.trim() : '';
+    if (customText) {
+      var customParts = customText.split(/[，,]+/);
+      for (var j = 0; j < customParts.length; j++) {
+        var cleaned = customParts[j].trim();
+        if (cleaned && tags.indexOf(cleaned) === -1) {
+          tags.push(cleaned);
+        }
+      }
+    }
+    
+    var db = Storage.load();
+    var originalEntry = db.journalEntries.find(function(item) { return item.id === entryId; });
+    if (!originalEntry) return;
+    
+    if (!Array.isArray(originalEntry.comments)) {
+      originalEntry.comments = [];
+    }
+    
+    var commentId = 'comment-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+    var newComment = {
+      id: commentId,
+      author: author,
+      content: content,
+      sticker: sticker,
+      tags: tags,
+      createdAt: new Date().toISOString()
+    };
+    
+    originalEntry.comments.push(newComment);
+    
+    Storage.updateJournalEntry(entryId, {
+      comments: originalEntry.comments
+    });
+    
+    renderAll();
+    Animations.toast('評論已發送', 'success');
+  }
+
+  function deleteComment(entryId, commentId) {
+    if (!confirm('確定要刪除此條評論嗎？')) return;
+    
+    var db = Storage.load();
+    var entry = db.journalEntries.find(function(item) { return item.id === entryId; });
+    if (!entry) return;
+    
+    if (Array.isArray(entry.comments)) {
+      var updated = entry.comments.filter(function(c) { return c.id !== commentId; });
+      Storage.updateJournalEntry(entryId, {
+        comments: updated
+      });
+      renderAll();
+      Animations.toast('評論已刪除', 'info');
+    }
+  }
+
+  async function generateAiJournalSummary(journalContent, comments) {
+    var commentsText = comments.map(function(c) {
+      var t = (c.tags || []).join(', ');
+      var sticker = c.sticker ? ' [貼圖: ' + c.sticker + ']' : '';
+      return c.author + ': ' + c.content + sticker + (t ? ' (標註: ' + t + ')' : '');
+    }).join('\n');
+    
+    var userPrompt = '日記內容：\n' + journalContent + '\n\n對話評論：\n' + commentsText;
+    
+    var systemPrompt = '請總結給定的日誌與其評論對話群。請以繁體中文撰寫，總結出這段日精進及評論的重點與有價值之處。字數請控制在 150 字內，口吻需要客觀、溫暖且有建設性。請務必輸出 JSON 格式：{"summary": "..."}。不要輸出 any markdown 或其他標記。';
+    
+    var result = await callGoogleAiJson(systemPrompt, userPrompt);
+    return result.summary || '';
+  }
+
+  async function generateSummary(entryId) {
+    var db = Storage.load();
+    var entry = db.journalEntries.find(function(item) { return item.id === entryId; });
+    if (!entry) return;
+    
+    var comments = Array.isArray(entry.comments) ? entry.comments : [];
+    if (comments.length === 0) {
+      Animations.toast('尚無對話評論，無法生成總結', 'warning');
+      return;
+    }
+    
+    if (!getGoogleApiKey()) {
+      Animations.toast('請先至「設定」頁面填寫 Google AI API Key', 'error');
+      return;
+    }
+    
+    Animations.toast('AI 總結生成中...', 'info');
+    try {
+      var summaryText = await generateAiJournalSummary(entry.polishedContent || entry.content || '', comments);
+      if (summaryText) {
+        Storage.updateJournalEntry(entryId, {
+          aiSummary: summaryText
+        });
+        renderAll();
+        Animations.toast('已成功生成 AI 對話總結', 'success');
+      } else {
+        throw new Error('empty_summary');
+      }
+    } catch (err) {
+      console.error('AI Summary generation failed:', err);
+      Animations.toast('AI 總結生成失敗，請確認 API Key 是否正確及網路是否暢通', 'danger');
+    }
+  }
+
+  function regenerateSummary(entryId) {
+    generateSummary(entryId);
+  }
+
+  function renderCommentsSection(entry, searchQuery) {
+    var comments = Array.isArray(entry.comments) ? entry.comments : [];
+    var aiSummary = entry.aiSummary || '';
+    
+    var STICKERS = [
+      '👍', '❤️', '👏', '🎉', '💪', '🔥', '🌟', '😍', '😂', '🤔',
+      '💡', '😮', '😭', '🧘', '🚀', '🌸', '👑', '🐾', '☕', '💯'
+    ];
+    
+    var commentsListHtml = '';
+    if (comments.length > 0) {
+      commentsListHtml = comments.map(function(c) {
+        var stickerHtml = c.sticker ? '<span class="comment-sticker-display" style="font-size: 24px; margin-left: 8px;">' + c.sticker + '</span>' : '';
+        var tagsHtml = '';
+        if (Array.isArray(c.tags) && c.tags.length > 0) {
+          tagsHtml = c.tags.map(function(t) {
+            return '<span class="comment-tag-chip" style="font-size: 11px; padding: 2px 6px; border-radius: 4px; background: rgba(168, 216, 234, 0.12); border: 1px solid rgba(168, 216, 234, 0.2); color: var(--accent-1); margin-right: 4px;">' + escapeHtml(t) + '</span>';
+          }).join('');
+        }
+        var authorIcon = c.author === '小花' ? '👩🏻' : '👦🏻';
+        var authorClass = c.author === '小花' ? 'author-tag-flower' : 'author-tag-wei';
+        
+        var displayCommentContent = markdownToHtml(c.content);
+        if (searchQuery) {
+          displayCommentContent = highlightKeyword(displayCommentContent, searchQuery);
+        }
+
+        return '<div class="comment-item" style="display: flex; flex-direction: column; gap: 4px; padding: 10px; border-radius: 8px; background: rgba(255,255,255,0.02); border: 1px solid var(--border-subtle); margin-bottom: 8px; position: relative;">' +
+               '<button type="button" class="comment-delete-btn" style="position: absolute; top: 6px; right: 8px; border: none; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 16px;" onclick="App.deleteComment(\'' + entry.id + '\', \'' + c.id + '\')">&times;</button>' +
+               '<div style="display: flex; align-items: center; justify-content: space-between;">' +
+                 '<div style="display: flex; align-items: center; gap: 6px;">' +
+                   '<span class="author-tag ' + authorClass + '" style="padding: 1px 6px; font-size: 11px;">' + authorIcon + ' ' + c.author + '</span>' +
+                   '<span style="font-size: 11px; color: var(--text-muted);">' + formatZhDate(c.createdAt) + '</span>' +
+                 '</div>' +
+               '</div>' +
+               '<div style="display: flex; align-items: flex-start; justify-content: space-between; margin-top: 4px;">' +
+                 '<div style="flex: 1; font-size: 13px; color: var(--text-primary); line-height: 1.5;" class="comment-markdown-body">' + displayCommentContent + '</div>' +
+                 stickerHtml +
+               '</div>' +
+               (tagsHtml ? '<div style="margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px;">' + tagsHtml + '</div>' : '') +
+             '</div>';
+      }).join('');
+    } else {
+      commentsListHtml = '<div style="text-align: center; color: var(--text-muted); padding: 12px; font-size: 13px;">目前尚無評論，點擊下方發送第一條評論吧 💬</div>';
+    }
+
+    var stickersSelectorHtml = STICKERS.map(function(s) {
+      return '<span class="sticker-select-option" style="font-size: 22px; cursor: pointer; padding: 4px; border-radius: 4px; transition: background 0.2s;" onclick="App.selectCommentSticker(this, \'' + s + '\')">' + s + '</span>';
+    }).join('');
+
+    var aiSummarySectionHtml = '';
+    if (comments.length > 0) {
+      if (aiSummary) {
+        aiSummarySectionHtml = '<div class="ai-summary-card" style="margin-top: 16px; padding: 14px; border-radius: var(--radius-md); background: rgba(168, 216, 234, 0.05); border: 1px solid rgba(168, 216, 234, 0.15);">' +
+            '<div style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px;">' +
+              '<span style="font-size: 16px;">🤖</span>' +
+              '<strong style="font-size: 14px; color: var(--accent-1);">AI 對話總結</strong>' +
+              '<button type="button" class="history-delete-btn" style="margin-left: auto; padding: 2px 8px; font-size: 10px;" onclick="App.regenerateSummary(\'' + entry.id + '\')">重新總結</button>' +
+            '</div>' +
+            '<p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6; white-space: pre-wrap;">' + escapeHtml(aiSummary) + '</p>' +
+          '</div>';
+      } else {
+        aiSummarySectionHtml = '<div style="margin-top: 16px; text-align: center;">' +
+            '<button type="button" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px;" onclick="App.generateSummary(\'' + entry.id + '\')">' +
+              '<span>✨</span> 生成 AI 對話總結' +
+            '</button>' +
+          '</div>';
+      }
+    }
+
+    var currentLoginIdentity = localStorage.getItem('login-identity') || '小葦';
+    var commentAuthorSelectorWeiActive = currentLoginIdentity === '小葦' ? ' active' : '';
+    var commentAuthorSelectorFlowerActive = currentLoginIdentity === '小花' ? ' active' : '';
+
+    return '<div class="comments-section" style="margin-top: 20px; border-top: 1px dashed var(--border-subtle); padding-top: 16px;">' +
+        '<h4 style="font-size: 14px; font-weight: 700; color: var(--text-primary); margin-bottom: 12px; display: flex; align-items: center; gap: 6px;">' +
+          '<span>💬</span> 評論與貼圖回饋 (' + comments.length + ')' +
+        '</h4>' +
+        '<div class="comments-list" style="max-height: 300px; overflow-y: auto; margin-bottom: 16px; padding-right: 4px;">' +
+          commentsListHtml +
+        '</div>' +
+        aiSummarySectionHtml +
+        '<div class="add-comment-box" style="margin-top: 16px; padding: 12px; border-radius: var(--radius-md); background: rgba(0,0,0,0.15); border: 1px solid var(--border-subtle);">' +
+          '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">' +
+            '<span style="font-size: 12px; font-weight: 600; color: var(--text-secondary);">新增評論</span>' +
+            '<div class="comment-author-selector" style="display: flex; gap: 6px;">' +
+              '<button type="button" class="comment-author-btn' + commentAuthorSelectorWeiActive + '" data-comment-author="小葦" style="padding: 3px 8px; font-size: 11px; border-radius: 4px; border: 1px solid var(--border-subtle); background: rgba(255,255,255,0.02); color: var(--text-secondary); cursor: pointer; transition: all 0.2s;" onclick="App.selectCommentAuthor(this)">👦🏻 小葦</button>' +
+              '<button type="button" class="comment-author-btn' + commentAuthorSelectorFlowerActive + '" data-comment-author="小花" style="padding: 3px 8px; font-size: 11px; border-radius: 4px; border: 1px solid var(--border-subtle); background: rgba(255,255,255,0.02); color: var(--text-secondary); cursor: pointer; transition: all 0.2s;" onclick="App.selectCommentAuthor(this)">👩🏻 小花</button>' +
+            '</div>' +
+          '</div>' +
+          '<div style="margin-bottom: 8px;">' +
+            '<label style="display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">選擇貼圖回饋 (選填)</label>' +
+            '<div class="stickers-picker" style="display: flex; flex-wrap: wrap; gap: 4px; max-height: 60px; overflow-y: auto; padding: 4px; border-radius: 4px; background: rgba(0,0,0,0.2);">' +
+              stickersSelectorHtml +
+            '</div>' +
+            '<input type="hidden" class="comment-selected-sticker" value="" />' +
+          '</div>' +
+          '<div style="margin-bottom: 8px;">' +
+            '<label style="display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">標註分類 (可複選/選填)</label>' +
+            '<div class="quick-tags-container" style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px;">' +
+              '<span class="quick-tag-option" style="font-size: 11px; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border-subtle); background: rgba(255,255,255,0.02); color: var(--text-secondary); cursor: pointer;" onclick="App.toggleQuickTag(this)">讚賞 👏</span>' +
+              '<span class="quick-tag-option" style="font-size: 11px; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border-subtle); background: rgba(255,255,255,0.02); color: var(--text-secondary); cursor: pointer;" onclick="App.toggleQuickTag(this)">共鳴 ❤️</span>' +
+              '<span class="quick-tag-option" style="font-size: 11px; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border-subtle); background: rgba(255,255,255,0.02); color: var(--text-secondary); cursor: pointer;" onclick="App.toggleQuickTag(this)">提醒 💡</span>' +
+              '<span class="quick-tag-option" style="font-size: 11px; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border-subtle); background: rgba(255,255,255,0.02); color: var(--text-secondary); cursor: pointer;" onclick="App.toggleQuickTag(this)">反思 🧘</span>' +
+            '</div>' +
+            '<input type="text" class="comment-custom-tags" placeholder="輸入其他自訂標籤 (多個請用逗號隔開)" style="width: 100%; padding: 6px 10px; border-radius: 4px; border: 1px solid var(--border-subtle); background: rgba(0,0,0,0.1); color: var(--text-primary); font-size: 11px; outline: none; margin-top: 4px;" />' +
+          '</div>' +
+          '<div style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px; width: 100%;">' +
+            '<div class="comment-content-input" contenteditable="true" data-placeholder="寫下評論 (支援 Markdown 快速鍵，Ctrl+Enter 發送)..." style="width: 100%;" onkeydown="if((event.ctrlKey || event.metaKey) && event.key === \'Enter\') { event.preventDefault(); App.submitComment(\'' + entry.id + '\', this); }"></div>' +
+            '<button type="button" class="btn btn-primary" style="align-self: flex-end; padding: 0 14px; font-size: 12px; height: 34px; font-weight: 600;" onclick="App.submitComment(\'' + entry.id + '\', this)">發送</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+  }
+
+  function highlightKeyword(text, keyword) {
+    if (!text || !keyword) return text;
+    var regex = new RegExp('(' + escapeRegExp(keyword) + ')', 'gi');
+    var parts = text.split(/(<[^>]+>)/g);
+    for (var i = 0; i < parts.length; i++) {
+      if (parts[i] && parts[i].charAt(0) !== '<') {
+        parts[i] = parts[i].replace(regex, '<mark class="search-highlight">$1</mark>');
+      }
+    }
+    return parts.join('');
+  }
+
+  function escapeRegExp(string) {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
+  function handleGlobalAuthorToggle() {
+    // no-op to lock active status on both authors
+  }
+
+  function handleSaveGoogleApiKey() {
+    const input = document.getElementById('google-api-key-input');
+    const apiKey = (input ? input.value.trim() : '') || '';
+    if (!apiKey) {
+      updateGoogleApiKeyStatus('請先輸入 API Key', true);
+      Animations.toast('請先輸入 API Key', 'warning');
+      return;
+    }
+    saveGoogleApiKey(apiKey);
+    updateGoogleApiKeyStatus('Google API Key 已儲存在這台裝置的瀏覽器中');
+    updateJournalAiMode();
+    Animations.toast('API Key 已儲存', 'success');
+  }
+
+  function handleToggleGoogleApiKeyVisibility() {
+    isGoogleApiKeyVisible = !isGoogleApiKeyVisible;
+    hydrateGoogleApiKeyInput();
+  }
+
+  function handleClearGoogleApiKey() {
+    clearGoogleApiKey();
+    const input = document.getElementById('google-api-key-input');
+    if (input) input.value = '';
+    updateGoogleApiKeyStatus('Google API Key 已清除');
+    updateJournalAiMode();
+    Animations.toast('API Key 已清除', 'info');
+  }
+
+  function applyJournalDateSelection(dateLike) {
+    setSelectedJournalDate(dateLike);
+    const titleInput = document.getElementById('journal-title-input');
+    if (titleInput && titleInput.value.trim()) {
+      const rawText = titleInput.value.trim();
+      const suffix = rawText.includes('-') ? rawText.split('-').slice(1).join('-').trim() : rawText;
+      titleInput.value = `${formatZhDate(getSelectedJournalDate())}-${suffix}`;
+      syncJournalTitleHint();
+    }
+    renderJournal();
+    setJournalDatePickerOpen(false);
+  }
+
+  function setJournalDatePickerOpen(isOpen) {
+    isJournalDatePickerOpen = isOpen;
+    const panel = document.getElementById('journal-date-quick-picker');
+    if (!panel) return;
+    panel.style.display = isOpen ? 'grid' : 'none';
+  }
+
+  function openJournalDatePicker() {
+    const input = document.getElementById('journal-date-input');
+    const currentValue = formatDateInputValue(getSelectedJournalDate());
+    if (input) input.value = currentValue;
+    setJournalDatePickerOpen(!isJournalDatePickerOpen);
+  }
+
+  function handleJournalDateChange(event) {
+    const value = event.target.value;
+    if (!value) return;
+    applyJournalDateSelection(new Date(`${value}T00:00:00`));
+  }
+
+  function choosePreviousJournalDate() {
+    applyJournalDateSelection(addDays(getSelectedJournalDate(), -1));
+  }
+
+  function chooseNextJournalDate() {
+    applyJournalDateSelection(addDays(getSelectedJournalDate(), 1));
+  }
+
+  function cancelJournalEdit() {
+    clearJournalDraft();
+    renderJournal();
+    Animations.toast('已取消編輯', 'info');
+  }
+
+  function jumpToAdjacentJournal(direction) {
+    if (!editingJournalEntryId) return;
+    const entries = Storage.getJournalEntries();
+    const currentIndex = entries.findIndex(item => item.id === editingJournalEntryId);
+    if (currentIndex === -1) return;
+    const targetIndex = currentIndex + direction;
+    if (targetIndex < 0 || targetIndex >= entries.length) return;
+    editJournalEntry(entries[targetIndex].id);
+  }
+
+  function forceRefreshPage() {
+    const version = window.HABIT_SNOWBALL_VERSION || `${Date.now()}`;
+    const url = new URL(window.location.href);
+    url.searchParams.set('refresh', version);
+    window.location.replace(url.toString());
+  }
+
+  async function resetAllData() {
+    if (!confirm('確定要清除所有資料嗎？此操作無法復原！')) return;
+
+    const resetBtn = document.getElementById('btn-reset-all-data');
+    if (resetBtn) {
+      resetBtn.disabled = true;
+      resetBtn.textContent = '清除中...';
+    }
+
+    try {
+      await Storage.clearAllData();
+      data = Storage.load();
+      renderAll();
+      SnowballVis.setStage(ScoringEngine.getStage(0));
+      Animations.toast('所有資料已清除', 'success');
+    } catch (error) {
+      console.error('Failed to reset all data:', error);
+      Animations.toast('清除失敗，請稍後再試', 'error');
+    } finally {
+      if (resetBtn) {
+        resetBtn.disabled = false;
+        resetBtn.textContent = '清除所有資料';
+      }
+    }
+  }
+
+  function showAddHabitModal() {
+    const modal = document.getElementById('add-habit-modal');
+    modal.classList.add('show');
+    document.getElementById('habit-name-input').focus();
+  }
+
+  function hideAddHabitModal() {
+    const modal = document.getElementById('add-habit-modal');
+    modal.classList.remove('show');
+    document.getElementById('habit-name-input').value = '';
+  }
+
+  function submitNewHabit() {
+    const name = document.getElementById('habit-name-input').value;
+    const typeChecked = document.querySelector('input[name="habit-type"]:checked');
+    const type = (typeChecked ? typeChecked.value : '') || 'resist';
+    const emoji = document.getElementById('habit-emoji-input').value || (type === 'resist' ? '🚫' : '✅');
+
+    if (!name.trim()) {
+      Animations.shake(document.getElementById('habit-name-input'));
+      return;
+    }
+
+    addHabit(name, type, emoji);
+    hideAddHabitModal();
+  }
+
+  function showOnboarding() {
+    setTimeout(() => {
+      Animations.toast('歡迎！試著新增你的第一個習慣 ✨', 'info', 4000);
+    }, 1000);
+  }
+
+  function switchView(view) {
+    currentView = view;
+    document.querySelectorAll('.nav-item').forEach(el => {
+      el.classList.toggle('active', el.dataset.view === view);
+    });
+    document.querySelectorAll('.view-section').forEach(el => {
+      el.classList.toggle('active', el.id === `view-${view}`);
+    });
+  }
+
+  function bindEvents() {
+    function addEvent(id, type, handler) {
+      var el = document.getElementById(id);
+      if (el) el.addEventListener(type, handler);
+    }
+
+    document.querySelectorAll('.nav-item').forEach(el => {
+      el.addEventListener('click', () => switchView(el.dataset.view));
+    });
+
+    addEvent('btn-add-habit', 'click', showAddHabitModal);
+    addEvent('btn-submit-habit', 'click', submitNewHabit);
+    addEvent('btn-cancel-habit', 'click', hideAddHabitModal);
+
+    addEvent('add-habit-modal', 'click', e => {
+      if (e.target.id === 'add-habit-modal') hideAddHabitModal();
+    });
+
+    addEvent('habit-name-input', 'keydown', e => {
+      if (e.key === 'Enter') submitNewHabit();
+    });
+
+    document.querySelectorAll('.emoji-option').forEach(el => {
+      el.addEventListener('click', () => {
+        document.querySelectorAll('.emoji-option').forEach(node => node.classList.remove('selected'));
+        el.classList.add('selected');
+        document.getElementById('habit-emoji-input').value = el.textContent;
+      });
+    });
+
+    addEvent('btn-submit-note', 'click', submitNote);
+    addEvent('btn-cancel-note', 'click', skipNote);
+    addEvent('note-modal', 'click', e => {
+      if (e.target.id === 'note-modal') hideNoteModal();
+    });
+
+    addEvent('toolbar-bullet', 'click', () => {
+      document.getElementById('note-input').focus();
+      document.execCommand('insertUnorderedList', false, null);
+    });
+    addEvent('toolbar-bold', 'click', () => {
+      document.getElementById('note-input').focus();
+      document.execCommand('bold', false, null);
+    });
+
+    addEvent('btn-awareness-evolve', 'click', handleAwarenessSuccess);
+    addEvent('awareness-modal', 'click', e => {
+      if (e.target.id === 'awareness-modal') hideAwarenessModal();
+    });
+
+    addEvent('btn-save-sync-user', 'click', () => {
+      const input = document.getElementById('sync-user-input');
+      const val = input ? input.value.trim() : 'default';
+      localStorage.setItem('simulated-current-user', val || 'default');
+
+      const statusMsg = document.getElementById('sync-status-msg');
+      if (statusMsg) statusMsg.style.display = 'block';
+
+      setTimeout(() => {
+        window.location.reload();
+      }, 1000);
+    });
+
+    addEvent('btn-reset-all-data', 'click', resetAllData);
+
+    function handleAuthorChange(authorName) {
+      localStorage.setItem('last-selected-author', authorName);
+      document.querySelectorAll('.author-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.author === authorName);
+      });
+      renderAll();
+    }
+
+    document.querySelectorAll('.author-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        handleAuthorChange(btn.dataset.author);
+      });
+    });
+
+    document.querySelectorAll('.g-author-btn').forEach(btn => {
+      btn.addEventListener('click', handleGlobalAuthorToggle);
+    });
+
+    addEvent('journal-search-input', 'input', () => {
+      journalCurrentPage = 1;
+      renderJournal();
+    });
+
+    addEvent('btn-open-composer', 'click', () => {
+      clearJournalDraft();
+      showJournalComposer();
+    });
+    addEvent('btn-close-composer', 'click', hideJournalComposer);
+    addEvent('journal-composer-modal', 'click', e => {
+      if (e.target.id === 'journal-composer-modal') hideJournalComposer();
+    });
+
+    addEvent('btn-save-google-api-key', 'click', handleSaveGoogleApiKey);
+    addEvent('btn-toggle-google-api-key', 'click', handleToggleGoogleApiKeyVisibility);
+    addEvent('btn-clear-google-api-key', 'click', handleClearGoogleApiKey);
+    addEvent('btn-cancel-journal-edit', 'click', cancelJournalEdit);
+    addEvent('btn-edit-prev-journal', 'click', () => jumpToAdjacentJournal(-1));
+    addEvent('btn-edit-next-journal', 'click', () => jumpToAdjacentJournal(1));
+    addEvent('btn-journal-date-picker', 'click', openJournalDatePicker);
+    addEvent('btn-journal-date-prev', 'click', choosePreviousJournalDate);
+    addEvent('btn-journal-date-next', 'click', chooseNextJournalDate);
+    addEvent('journal-date-input', 'change', handleJournalDateChange);
+    addEvent('btn-force-refresh-page', 'click', forceRefreshPage);
+    addEvent('btn-journal-polish', 'click', handleJournalPolish);
+    addEvent('btn-journal-keywords', 'click', handleJournalKeywords);
+    addEvent('btn-journal-title', 'click', handleJournalTitle);
+    addEvent('btn-journal-run-all', 'click', handleJournalRunAll);
+    addEvent('btn-journal-clear', 'click', clearJournalDraft);
+    addEvent('btn-journal-save', 'click', saveJournalEntry);
+    addEvent('journal-title-input', 'input', syncJournalTitleHint);
+    addEvent('journal-input', 'input', autoFormatJournalOutline);
+
+    setupWysiwygEditor(document.getElementById('journal-input'));
+
+    window.addEventListener('resize', () => {
+      SnowballVis.resize();
+      renderWeeklyChart();
+    });
+  }
+
+  return {
+    init,
+    recordAction,
+    promptAction,
+    startAwareness,
+    addHabit,
+    deleteHabit,
+    deleteRecord,
+    editJournalEntry,
+    toggleJournalEntry,
+    deleteJournalEntry,
+    resetAllData,
+    showAddHabitModal,
+    hideAddHabitModal,
+    switchView,
+    selectLoginIdentity,
+    toggleTheme,
+    selectCommentAuthor,
+    selectCommentSticker,
+    toggleQuickTag,
+    submitComment,
+    deleteComment,
+    generateSummary,
+    regenerateSummary,
+    setJournalPage,
+    showJournalComposer,
+    hideJournalComposer
+  };
+})();
+
+document.addEventListener('DOMContentLoaded', App.init);

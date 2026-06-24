@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="description" content="習慣雪球追蹤器 — 讓好習慣像雪球一樣越滾越大。記錄每一次的堅持，看見自己的成長。">
+  <meta name="theme-color" content="#0a0e27">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>習慣雪球 — Habit Snowball</title>
+  <script>
+    // Safe Storage Polyfill to prevent iOS/Safari Incognito SecurityErrors
+    (function() {
+      var storageMock = {};
+      var isSupported = false;
+      try {
+        var testKey = '__storage_test__';
+        window.localStorage.setItem(testKey, 'test');
+        window.localStorage.removeItem(testKey);
+        isSupported = true;
+      } catch (e) {
+        isSupported = false;
+      }
+
+      if (!isSupported) {
+        console.warn('LocalStorage is restricted. Using in-memory storage fallback.');
+        var mockStore = {};
+        var localStorageMock = {
+          getItem: function(key) {
+            return key in mockStore ? mockStore[key] : null;
+          },
+          setItem: function(key, value) {
+            mockStore[key] = String(value);
+          },
+          removeItem: function(key) {
+            delete mockStore[key];
+          },
+          clear: function() {
+            mockStore = {};
+          },
+          key: function(index) {
+            var keys = Object.keys(mockStore);
+            return keys[index] || null;
+          },
+          get length() {
+            return Object.keys(mockStore).length;
+          }
+        };
+        
+        try {
+          Object.defineProperty(window, 'localStorage', {
+            value: localStorageMock,
+            writable: true
+          });
+          Object.defineProperty(window, 'sessionStorage', {
+            value: localStorageMock,
+            writable: true
+          });
+        } catch (e) {
+          window.localStorage = localStorageMock;
+          window.sessionStorage = localStorageMock;
+        }
+      }
+    })();
+
+    // Diagnostics Error Console for debugging startup crashes on mobile Safari
+    (function() {
+      function showError(message, stack) {
+        var errDiv = document.getElementById('debug-error-console');
+        if (!errDiv) {
+          errDiv = document.createElement('div');
+          errDiv.id = 'debug-error-console';
+          errDiv.style.position = 'fixed';
+          errDiv.style.top = '10px';
+          errDiv.style.left = '10px';
+          errDiv.style.right = '10px';
+          errDiv.style.backgroundColor = 'rgba(239, 68, 68, 0.95)';
+          errDiv.style.color = '#ffffff';
+          errDiv.style.padding = '12px';
+          errDiv.style.borderRadius = '8px';
+          errDiv.style.zIndex = '999999';
+          errDiv.style.fontSize = '12px';
+          errDiv.style.fontFamily = 'monospace';
+          errDiv.style.maxHeight = '200px';
+          errDiv.style.overflowY = 'auto';
+          errDiv.style.boxShadow = '0 4px 6px rgba(0,0,0,0.1)';
+          errDiv.innerHTML = '<strong style="display:block;margin-bottom:6px;font-size:14px;">⚠️ 系統偵測到錯誤 (Diagnostics)</strong>';
+          
+          var closeBtn = document.createElement('button');
+          closeBtn.textContent = '關閉';
+          closeBtn.style.float = 'right';
+          closeBtn.style.background = '#ffffff';
+          closeBtn.style.color = '#ef4444';
+          closeBtn.style.border = 'none';
+          closeBtn.style.padding = '2px 8px';
+          closeBtn.style.borderRadius = '4px';
+          closeBtn.style.fontSize = '10px';
+          closeBtn.style.cursor = 'pointer';
+          closeBtn.onclick = function() {
+            errDiv.style.display = 'none';
+          };
+          errDiv.firstChild.appendChild(closeBtn);
+          document.body ? document.body.appendChild(errDiv) : window.addEventListener('DOMContentLoaded', function() { document.body.appendChild(errDiv); });
+        }
+        var p = document.createElement('p');
+        p.style.margin = '4px 0 0 0';
+        p.style.whiteSpace = 'pre-wrap';
+        p.textContent = message + (stack ? '\n' + stack : '');
+        errDiv.appendChild(p);
+      }
+
+      window.addEventListener('error', function(e) {
+        showError(e.message + ' (' + e.filename + ':' + e.lineno + ':' + e.colno + ')', e.error ? e.error.stack : '');
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        showError('Unhandled Promise Rejection: ' + e.reason, e.reason && e.reason.stack ? e.reason.stack : '');
+      });
+    })();
+  </script>
+  <script>
+    window.HABIT_SNOWBALL_VERSION = '20260624_1130';
+  </script>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>❄️</text></svg>">
+  <link rel="stylesheet" href="css/style.css?v=20260624_1130">
+</head>
+<body>
+  <!-- 飄浮白雲 (明亮主題) -->
+  <div class="clouds-container" style="display: none;">
+    <div class="cloud cloud-1"></div>
+    <div class="cloud cloud-2"></div>
+    <div class="cloud cloud-3"></div>
+    <div class="cloud cloud-4"></div>
+  </div>
+
+  <!-- 身分選擇畫面 (首次進入時顯示) -->
+  <div id="identity-picker-overlay" style="display: none;">
+    <div class="identity-picker-title">你是誰？</div>
+    <div class="identity-picker-subtitle">選擇你的身分，系統會記住你的選擇</div>
+    <div class="identity-picker-cards">
+      <div class="identity-card identity-card-wei" onclick="App.selectLoginIdentity('小葦')">
+        <span class="identity-card-icon">👦🏻</span>
+        <span class="identity-card-name">小葦</span>
+      </div>
+      <div class="identity-card identity-card-flower" onclick="App.selectLoginIdentity('小花')">
+        <span class="identity-card-icon">👩🏻</span>
+        <span class="identity-card-name">小花</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="app-container">
+    <!-- 頂部粘性 Header -->
+    <header class="app-header">
+      <div class="header-main-row">
+        <h1 class="app-title">📓 日精進</h1>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <!-- 全域填寫人切換器 (支援多選) -->
+          <div class="global-author-toggle">
+            <button type="button" class="g-author-btn active" data-author="小葦" id="btn-toggle-author-wei">
+              <span>👦🏻</span>
+              <span>小葦</span>
+            </button>
+            <button type="button" class="g-author-btn active" data-author="小花" id="btn-toggle-author-flower">
+              <span>👩🏻</span>
+              <span>小花</span>
+            </button>
+          </div>
+          <!-- 主題切換按鈕 -->
+          <button type="button" class="theme-toggle-btn" id="btn-theme-toggle" title="切換主題" onclick="App.toggleTheme()">
+            <span class="theme-icon">☀️</span>
+          </button>
+        </div>
+      </div>
+      <div class="search-bar-wrapper">
+        <input type="text" id="journal-search-input" class="search-input" placeholder="搜尋標題、內容或關鍵字..." autocomplete="off">
+      </div>
+    </header>
+
+    <!-- 隱藏的舊區塊以保證程式碼相容性不報錯 -->
+    <section id="hero-section" style="display: none;">
+      <div class="canvas-container">
+        <canvas id="snowball-canvas"></canvas>
+      </div>
+      <div class="score-display">
+        <div id="total-score">0</div>
+        <div class="score-label">累積積分</div>
+      </div>
+      <div class="stage-display">
+        <div id="stage-name">❄️ 雪花</div>
+        <div class="stage-progress">
+          <div id="stage-progress-fill"></div>
+        </div>
+        <div id="next-stage-info">距離下一階段還需 50 分</div>
+      </div>
+      <div class="stats-bar">
+        <div class="stat-item">
+          <div class="stat-value" id="stat-streak">0</div>
+          <div class="stat-label">🔥 連續天數</div>
+          <span id="streak-bonus"></span>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value" id="stat-today">0</div>
+          <div class="stat-label">📊 今日得分</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value" id="stat-resisted">0</div>
+          <div class="stat-label">🧬 總進化</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value" id="stat-longest">0</div>
+          <div class="stat-label">🏆 最長連續</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-home" class="view-section" style="display: none;">
+      <h2 class="section-title">⚡ 我的習慣</h2>
+      <div id="habits-list"></div>
+      <button id="btn-add-habit">
+        <span>＋</span> 新增習慣
+      </button>
+    </section>
+
+    <section id="view-history" class="view-section" style="display: none;">
+      <h2 class="section-title">📜 歷史記錄</h2>
+      <div class="chart-container">
+        <div class="chart-title">本週趨勢</div>
+        <canvas id="weekly-chart"></canvas>
+      </div>
+      <div id="history-list" style="margin-top: 16px;"></div>
+    </section>
+
+    <!-- 預設啟用的日記列表視圖 -->
+    <section id="view-journal" class="view-section active">
+      <div id="journal-list"></div>
+      <!-- 分頁控制區 -->
+      <div id="journal-pagination" class="pagination-container"></div>
+    </section>
+
+    <!-- 設定視圖 -->
+    <section id="view-settings" class="view-section">
+      <h2 class="section-title">⚙️ 設定</h2>
+
+      <div class="habit-card" style="margin-bottom: 16px;">
+        <h3 class="habit-name" style="margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
+          <span>☁️</span> 雲端同步帳號
+        </h3>
+        <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.4;">
+          輸入您的名稱以在手機與電腦等不同設備之間即時同步您的習慣記錄。
+        </p>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <input type="text" id="sync-user-input" class="form-input" style="flex: 1; margin: 0; padding: 10px; height: 38px;" placeholder="預設：default">
+          <button class="btn btn-primary" id="btn-save-sync-user" style="padding: 0 16px; height: 38px; font-size: 14px; font-weight: 600;">確認</button>
+        </div>
+        <p id="sync-status-msg" style="font-size: 12px; color: var(--accent-1); margin-top: 8px; display: none;">✓ 帳號已變更，正在重新載入雲端數據...</p>
+      </div>
+
+      <div class="habit-card" style="margin-bottom: 16px;">
+        <h3 class="habit-name" style="margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
+          <span>🤖</span> Google AI API Key
+        </h3>
+        <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.4;">
+          填入後，日記的 AI 潤稿、關鍵字與主題生成會優先使用 Google AI。未填入時，系統會改用本地規則。
+        </p>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <input type="password" id="google-api-key-input" class="form-input" style="flex: 1; margin: 0; padding: 10px; height: 38px;" placeholder="AIza...">
+          <button class="btn btn-primary" id="btn-save-google-api-key" style="padding: 0 16px; height: 38px; font-size: 14px; font-weight: 600;">儲存</button>
+        </div>
+        <div style="display: flex; gap: 8px; margin-top: 8px;">
+          <button class="btn btn-secondary" id="btn-toggle-google-api-key" style="height: 36px; font-size: 13px;">顯示</button>
+          <button class="btn btn-secondary" id="btn-clear-google-api-key" style="height: 36px; font-size: 13px;">清除</button>
+        </div>
+        <p id="google-api-key-status-msg" style="font-size: 12px; color: var(--accent-1); margin-top: 8px; display: none;"></p>
+      </div>
+
+      <div class="habit-card" style="margin-bottom: 16px;">
+        <h3 class="habit-name" style="margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
+          <span>💾</span> 資料備份與搬移
+        </h3>
+        <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.4;">
+          如果你需要將舊網站的資料移過來，或者想手動備份目前系統的習慣與歷史記錄：
+        </p>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-secondary" id="btn-export-data" style="flex: 1; font-size: 13px; font-weight: 600; padding: 10px 0;">匯出備份 (JSON)</button>
+          <button class="btn btn-secondary" id="btn-import-trigger" style="flex: 1; font-size: 13px; font-weight: 600; padding: 10px 0;">匯入備份 (JSON)</button>
+          <input type="file" id="file-import-data" accept=".json" style="display: none;">
+        </div>
+      </div>
+
+      <div class="habit-card" style="margin-top: 12px;">
+        <h3 class="habit-name" style="margin-bottom: 12px; color: var(--accent-negative);">⚠️ 重置資料</h3>
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">
+          清除所有習慣、記錄與積分。此操作無法復原。
+        </p>
+        <button class="btn btn-secondary" id="btn-reset-all-data" style="width: 100%;">
+          清除所有資料
+        </button>
+      </div>
+
+      <div class="habit-card" style="margin-top: 12px;">
+        <h3 class="habit-name" style="margin-bottom: 12px;">🔄 重新整理頁面</h3>
+        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">
+          如果你還看到舊畫面，按這個按鈕會用最新版本重新載入。
+        </p>
+        <button class="btn btn-secondary" id="btn-force-refresh-page" style="width: 100%;">
+          重新整理到最新版
+        </button>
+      </div>
+    </section>
+  </div>
+
+  <!-- 精簡導覽列：僅保留日記與設定 -->
+  <nav class="nav-bar">
+    <button class="nav-item active" data-view="journal">
+      <span class="nav-icon">✍️</span>
+      <span>日記</span>
+    </button>
+    <button class="nav-item" data-view="settings">
+      <span class="nav-icon">⚙️</span>
+      <span>設定</span>
+    </button>
+  </nav>
+
+  <!-- 懸浮新增日記按鈕 -->
+  <button id="btn-open-composer" class="floating-add-btn" title="新增日精進">＋</button>
+
+  <!-- 日記寫作器 Modal 彈窗 -->
+  <div class="modal-overlay" id="journal-composer-modal">
+    <div class="modal-content journal-modal-content">
+      <div class="modal-header-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+        <h2 class="modal-title" style="margin: 0;">✍️ 寫日精進</h2>
+        <span class="modal-close" id="btn-close-composer" style="cursor: pointer; font-size: 28px; line-height: 1; color: var(--text-secondary);">&times;</span>
+      </div>
+
+      <div class="journal-composer-card" style="border: none; padding: 0; background: transparent; backdrop-filter: none; box-shadow: none; margin: 0;">
+        <div class="journal-day-badge" id="journal-current-day">第 1 天</div>
+        <div class="journal-edit-banner" id="journal-edit-banner" style="display: none;">
+          <span id="journal-edit-label">正在編輯日記</span>
+          <div class="journal-edit-controls">
+            <button type="button" class="history-delete-btn" id="btn-edit-prev-journal">上一篇</button>
+            <button type="button" class="history-delete-btn" id="btn-edit-next-journal">下一篇</button>
+            <button type="button" class="history-delete-btn" id="btn-cancel-journal-edit">取消編輯</button>
+          </div>
+        </div>
+        <div class="journal-meta-row">
+          <button type="button" id="btn-journal-date-picker" class="journal-date-button">
+            <span class="journal-date-button-label">選擇日期</span>
+            <span id="journal-current-date"></span>
+          </button>
+        </div>
+        <div class="journal-date-quick-picker" id="journal-date-quick-picker" style="display: none;">
+          <button type="button" class="toolbar-btn journal-date-quick-btn" id="btn-journal-date-prev">前一天</button>
+          <button type="button" class="toolbar-btn journal-date-quick-btn" id="btn-journal-date-next">後一天</button>
+        </div>
+        <input type="date" id="journal-date-input" class="journal-date-input" />
+
+        <!-- 填寫人選擇 -->
+        <div class="form-group author-selection-group" style="margin-bottom: 20px;">
+          <label class="form-label" style="margin-bottom: 8px; display: block; font-size: 13px; font-weight: 600; color: var(--text-secondary);">✍️ 填寫人</label>
+          <div class="author-selector" style="display: flex; gap: 12px;">
+            <button type="button" class="author-btn" id="author-flower" data-author="小花" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px; border-radius: 8px; border: 1px solid var(--border-subtle); background: rgba(255,255,255,0.02); color: var(--text-secondary); font-weight: 600; cursor: pointer; transition: all 0.2s; font-family: var(--font-body); font-size: 14px;">
+              <span>👩🏻</span>
+              <span>小花</span>
+            </button>
+            <button type="button" class="author-btn active" id="author-wei" data-author="小葦" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px; border-radius: 8px; border: 1px solid var(--border-subtle); background: rgba(255,255,255,0.02); color: var(--text-secondary); font-weight: 600; cursor: pointer; transition: all 0.2s; font-family: var(--font-body); font-size: 14px;">
+              <span>👦🏻</span>
+              <span>小葦</span>
+            </button>
+          </div>
+        </div>
+
+        <input type="text" id="journal-title-input" class="form-input journal-title-input" placeholder="標題會自動生成，也可自行修改">
+
+        <div class="note-editor-wrapper">
+          <div class="journal-ai-header">
+            <div class="journal-ai-label-group">
+              <span class="journal-ai-title">AI 工具</span>
+              <span class="journal-ai-mode" id="journal-ai-mode">本地模式</span>
+            </div>
+            <button type="button" class="toolbar-btn journal-ai-runall-btn" id="btn-journal-run-all">一鍵生成</button>
+          </div>
+          <div class="note-editor-toolbar journal-toolbar">
+            <button type="button" class="toolbar-btn" id="btn-journal-polish">AI 潤稿</button>
+            <button type="button" class="toolbar-btn" id="btn-journal-keywords">關鍵字</button>
+            <button type="button" class="toolbar-btn" id="btn-journal-title">生成主題</button>
+          </div>
+          <div class="note-editor journal-editor" contenteditable="true" id="journal-input"
+               data-placeholder="寫下今天的行動、反思、卡點、收穫..."></div>
+        </div>
+
+        <div class="journal-keywords-panel" id="journal-keywords-panel" style="display: none;"></div>
+
+        <!-- 日記圖片上傳與顯示區區塊 -->
+        <div class="journal-image-section" style="margin-top: 16px; margin-bottom: 16px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <label class="form-label" style="margin: 0; font-size: 13px; font-weight: 600; color: var(--text-secondary);">🖼️ 日記圖片 (最多 15 張)</label>
+            <button type="button" class="btn btn-secondary" id="btn-journal-upload-image" style="padding: 4px 10px; font-size: 12px; height: auto;">
+              上傳圖片
+            </button>
+            <input type="file" id="journal-image-input" multiple accept="image/*" style="display: none;" />
+          </div>
+          <div class="journal-image-grid" id="journal-image-grid"></div>
+        </div>
+
+        <div class="modal-actions">
+          <button class="btn btn-secondary" id="btn-journal-clear">清空草稿</button>
+          <button class="btn btn-primary" id="btn-journal-save">儲存日記</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="add-habit-modal">
+    <div class="modal-content">
+      <h2 class="modal-title">✨ 新增習慣</h2>
+
+      <div class="form-group">
+        <label class="form-label">習慣名稱</label>
+        <input type="text" class="form-input" id="habit-name-input"
+               placeholder="例：淨食、運動、早睡..."
+               maxlength="20" autocomplete="off">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">習慣類型</label>
+        <div class="type-selector">
+          <div class="type-option">
+            <input type="radio" name="habit-type" value="resist" id="type-resist" checked>
+            <label for="type-resist">🚫 戒除壞習慣</label>
+          </div>
+          <div class="type-option">
+            <input type="radio" name="habit-type" value="build" id="type-build">
+            <label for="type-build">✅ 養成好習慣</label>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">選擇圖示</label>
+        <div class="emoji-picker">
+          <div class="emoji-option selected">🍽️</div>
+          <div class="emoji-option">💪</div>
+          <div class="emoji-option">🏃</div>
+          <div class="emoji-option">📱</div>
+          <div class="emoji-option">🛌</div>
+          <div class="emoji-option">📚</div>
+          <div class="emoji-option">🧘</div>
+          <div class="emoji-option">💧</div>
+          <div class="emoji-option">🚭</div>
+          <div class="emoji-option">🍺</div>
+        </div>
+        <input type="hidden" id="habit-emoji-input" value="🍽️">
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn btn-secondary" id="btn-cancel-habit">取消</button>
+        <button class="btn btn-primary" id="btn-submit-habit">新增</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="note-modal">
+    <div class="modal-content">
+      <div class="note-modal-header">
+        <span id="note-modal-emoji" class="note-modal-action-emoji"></span>
+        <div>
+          <h2 class="modal-title" style="margin-bottom: 2px;" id="note-modal-title">記錄</h2>
+          <span class="note-modal-subtitle" id="note-modal-subtitle"></span>
+        </div>
+      </div>
+
+      <div class="note-editor-wrapper">
+        <div class="note-editor-toolbar">
+          <button type="button" class="toolbar-btn" id="toolbar-bullet" title="條列項目">
+            <span>•</span> 列表
+          </button>
+          <button type="button" class="toolbar-btn" id="toolbar-bold" title="粗體 (Ctrl+B)">
+            <strong>B</strong> 粗體
+          </button>
+        </div>
+        <div class="note-editor" contenteditable="true" id="note-input"
+             data-placeholder="寫下你的感受或總結（選填）..."></div>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn btn-secondary" id="btn-cancel-note">取消</button>
+        <button class="btn btn-primary" id="btn-submit-note">✦ 儲存</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="awareness-modal">
+    <div class="modal-content awareness-content">
+      <div class="awareness-header">
+        <span class="awareness-emoji" style="font-size: 48px; display: block; margin-bottom: 10px;">🧘</span>
+        <h2 class="modal-title" style="margin-bottom: 6px;">覺察呼吸中...</h2>
+        <p class="awareness-tip">有念頭起，吸氣，吐氣，專注於當下 10 秒鐘。</p>
+      </div>
+
+      <div class="countdown-wrapper">
+        <div class="countdown-circle">
+          <svg class="countdown-svg" viewBox="0 0 100 100">
+            <circle class="countdown-bg-circle" cx="50" cy="50" r="45"></circle>
+            <circle class="countdown-progress-circle" id="countdown-bar" cx="50" cy="50" r="45"></circle>
+          </svg>
+          <div class="countdown-number" id="countdown-time">10</div>
+        </div>
+      </div>
+
+      <div class="modal-actions" style="margin-top: 10px;">
+        <button class="btn btn-primary btn-evolve-now" id="btn-awareness-evolve" style="width: 100%; justify-content: center; gap: 8px;">
+          🧬 我覺察了 (進化了！)
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 圖片詳情彈窗 (CRUD) -->
+  <div class="modal-overlay" id="image-detail-modal">
+    <div class="modal-content" style="max-width: 500px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+        <h2 class="modal-title">圖片詳細資訊</h2>
+        <span class="modal-close" onclick="document.getElementById('image-detail-modal').classList.remove('active')">&times;</span>
+      </div>
+      <div style="text-align: center; margin-bottom: 16px; background: rgba(0,0,0,0.2); border-radius: var(--radius-md); padding: 8px;">
+        <img id="image-detail-preview" src="" style="max-width: 100%; max-height: 250px; border-radius: var(--radius-sm); object-fit: contain;" />
+      </div>
+      <div class="form-group" style="margin-bottom: 16px;">
+        <label class="form-label">備註說明 (選填)</label>
+        <input type="text" id="image-detail-caption" class="form-input" placeholder="輸入關於這張圖片的描述..." />
+      </div>
+      <div style="display: flex; gap: 8px;">
+        <button type="button" class="btn btn-secondary" id="btn-image-detail-replace" style="flex: 1; justify-content: center;">替換圖片</button>
+        <button type="button" class="btn btn-secondary btn-danger" id="btn-image-detail-delete" style="flex: 1; justify-content: center; background: rgba(239, 68, 68, 0.2); color: #ef4444; border-color: rgba(239, 68, 68, 0.3);">刪除圖片</button>
+      </div>
+      <input type="file" id="image-detail-replace-input" accept="image/*" style="display: none;" />
+      <div style="margin-top: 16px; text-align: right;">
+        <button type="button" class="btn btn-primary" id="btn-image-detail-save" style="padding: 8px 16px;">確認儲存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 放大檢視燈箱 (Lightbox) -->
+  <div class="modal-overlay" id="image-zoom-modal" style="background: rgba(0, 0, 0, 0.95);">
+    <span class="modal-close" style="position: absolute; top: 20px; right: 20px; font-size: 40px; color: #fff; z-index: 1001;" onclick="document.getElementById('image-zoom-modal').classList.remove('active')">&times;</span>
+    <div class="lightbox-content" style="position: relative; width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 20px; box-sizing: border-box;">
+      <img id="image-zoom-img" src="" style="max-width: 100%; max-height: calc(100vh - 120px); object-fit: contain; border-radius: var(--radius-sm); border: 1px solid rgba(255,255,255,0.1);" />
+      <p id="image-zoom-caption" style="color: #fff; font-size: 14px; margin-top: 16px; text-align: center; max-width: 600px; line-height: 1.4; background: rgba(0,0,0,0.5); padding: 8px 16px; border-radius: var(--radius-full); pointer-events: none; min-height: 20px;"></p>
+    </div>
+  </div>
+
+  <script src="js/scoring.js?v=20260624_1130"></script>
+  <script src="js/storage.js?v=20260624_1130"></script>
+  <script src="js/particles.js?v=20260624_1130"></script>
+  <script src="js/snowball.js?v=20260624_1130"></script>
+  <script src="js/animations.js?v=20260624_1130"></script>
+  <script src="js/app.js?v=20260624_1130"></script>
+</body>
+</html>
