@@ -531,11 +531,19 @@ const App = (() => {
     }
 
     if (useOllama && targetOllamaUrl) {
+      let timeoutId = null;
       try {
         console.log(`Connecting to local Ollama via Tunnel: ${targetOllamaUrl}, using model: gemma4:e4b`);
         const cleanUrl = targetOllamaUrl.replace(/\/$/, '');
+        const controller = new AbortController();
+        timeoutId = setTimeout(() => {
+          console.warn('Ollama request timed out after 15 seconds. Aborting...');
+          controller.abort();
+        }, 15000);
+
         const response = await fetch(`${cleanUrl}/api/chat`, {
           method: 'POST',
+          signal: controller.signal,
           headers: {
             'Content-Type': 'application/json'
           },
@@ -553,6 +561,8 @@ const App = (() => {
           })
         });
 
+        if (timeoutId) clearTimeout(timeoutId);
+
         if (!response.ok) {
           throw new Error(`Ollama server returned status ${response.status}`);
         }
@@ -566,6 +576,7 @@ const App = (() => {
         console.log('Successfully completed call using Ollama model gemma4:e4b via Tunnel');
         return JSON.parse(content);
       } catch (ollamaError) {
+        if (timeoutId) clearTimeout(timeoutId);
         console.error('Ollama request failed, falling back to Gemini:', ollamaError);
         ollamaStatus = 'disconnected';
         updateJournalAiMode();
@@ -1642,28 +1653,41 @@ ${existingStr}
       return;
     }
 
-    if (getGoogleApiKey() || ollamaStatus === 'connected') {
-      try {
-        const aiResult = await generateAiJournalPolish(sourceText);
-        const aiText = normalizeEditorText((aiResult ? aiResult.polished : '') || '');
-        if (aiText) {
-          document.getElementById('journal-input').innerHTML = markdownToHtml(aiText);
-          const source = ollamaStatus === 'connected' ? '本地 AI (gemma4)' : 'Google AI';
-          Animations.toast(`已使用 ${source} 完成潤稿`, 'success');
-          return;
-        }
-      } catch (error) {
-        console.error('AI polish failed:', error);
-        updateGoogleApiKeyStatus('AI 潤稿失敗，已改用本地規則。', true);
-      }
+    const btn = document.getElementById('btn-journal-polish');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'AI 潤稿中...';
     }
 
-    if (!polished) {
-      Animations.toast('先寫一些內容再潤稿', 'warning');
-      return;
+    try {
+      if (getGoogleApiKey() || ollamaStatus === 'connected') {
+        try {
+          const aiResult = await generateAiJournalPolish(sourceText);
+          const aiText = normalizeEditorText((aiResult ? aiResult.polished : '') || '');
+          if (aiText) {
+            document.getElementById('journal-input').innerHTML = markdownToHtml(aiText);
+            const source = ollamaStatus === 'connected' ? '本地 AI (gemma4)' : 'Google AI';
+            Animations.toast(`已使用 ${source} 完成潤稿`, 'success');
+            return;
+          }
+        } catch (error) {
+          console.error('AI polish failed:', error);
+          updateGoogleApiKeyStatus('AI 潤稿失敗，已改用本地規則。', true);
+        }
+      }
+
+      if (!polished) {
+        Animations.toast('先寫一些內容再潤稿', 'warning');
+        return;
+      }
+      document.getElementById('journal-input').innerHTML = markdownToHtml(polished);
+      Animations.toast('已使用本地規則完成潤稿', 'success');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'AI 潤稿';
+      }
     }
-    document.getElementById('journal-input').innerHTML = markdownToHtml(polished);
-    Animations.toast('已使用本地規則完成潤稿', 'success');
   }
 
   async function handleJournalKeywords() {
@@ -1673,27 +1697,40 @@ ${existingStr}
       return;
     }
 
-    if (getGoogleApiKey() || ollamaStatus === 'connected') {
-      try {
-        const aiResult = await generateAiJournalKeywords(sourceText);
-        const aiKeywords = (aiResult && Array.isArray(aiResult.keywords))
-          ? normalizeSeoKeywords(aiResult.keywords, 6)
-          : [];
-        if (aiKeywords.length) {
-          updateJournalKeywordPanel(aiKeywords);
-          const source = ollamaStatus === 'connected' ? '本地 AI (gemma4)' : 'Google AI';
-          Animations.toast(`已使用 ${source} 產生關鍵字`, 'success');
-          return;
-        }
-      } catch (error) {
-        console.error('AI keywords failed:', error);
-        updateGoogleApiKeyStatus('AI 關鍵字生成失敗，已改用本地規則。', true);
-      }
+    const btn = document.getElementById('btn-journal-keywords');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = '生成標籤中...';
     }
 
-    const keywords = extractKeywords(sourceText);
-    updateJournalKeywordPanel(keywords);
-    Animations.toast(keywords.length ? '已使用本地規則產生關鍵字' : '內容太少，暫時無法提取關鍵字', keywords.length ? 'success' : 'warning');
+    try {
+      if (getGoogleApiKey() || ollamaStatus === 'connected') {
+        try {
+          const aiResult = await generateAiJournalKeywords(sourceText);
+          const aiKeywords = (aiResult && Array.isArray(aiResult.keywords))
+            ? normalizeSeoKeywords(aiResult.keywords, 6)
+            : [];
+          if (aiKeywords.length) {
+            updateJournalKeywordPanel(aiKeywords);
+            const source = ollamaStatus === 'connected' ? '本地 AI (gemma4)' : 'Google AI';
+            Animations.toast(`已使用 ${source} 產生關鍵字`, 'success');
+            return;
+          }
+        } catch (error) {
+          console.error('AI keywords failed:', error);
+          updateGoogleApiKeyStatus('AI 關鍵字生成失敗，已改用本地規則。', true);
+        }
+      }
+
+      const keywords = extractKeywords(sourceText);
+      updateJournalKeywordPanel(keywords);
+      Animations.toast(keywords.length ? '已使用本地規則產生關鍵字' : '內容太少，暫時無法提取關鍵字', keywords.length ? 'success' : 'warning');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = '關鍵字';
+      }
+    }
   }
 
   async function handleJournalTitle() {
@@ -1703,28 +1740,41 @@ ${existingStr}
       return;
     }
 
-    let generatedTitle = '';
-    if (getGoogleApiKey() || ollamaStatus === 'connected') {
-      try {
-        const aiResult = await generateAiJournalTitle(text);
-        const aiTitle = normalizeEditorText((aiResult ? aiResult.title : '') || '');
-        if (aiTitle) {
-          generatedTitle = `${formatZhDate(getSelectedJournalDate())}-${aiTitle}`;
+    const btn = document.getElementById('btn-journal-title');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = '生成主題中...';
+    }
+
+    try {
+      let generatedTitle = '';
+      if (getGoogleApiKey() || ollamaStatus === 'connected') {
+        try {
+          const aiResult = await generateAiJournalTitle(text);
+          const aiTitle = normalizeEditorText((aiResult ? aiResult.title : '') || '');
+          if (aiTitle) {
+            generatedTitle = `${formatZhDate(getSelectedJournalDate())}-${aiTitle}`;
+          }
+        } catch (error) {
+          console.error('AI title failed:', error);
+          updateGoogleApiKeyStatus('AI 主題生成失敗，已改用本地規則。', true);
         }
-      } catch (error) {
-        console.error('AI title failed:', error);
-        updateGoogleApiKeyStatus('AI 主題生成失敗，已改用本地規則。', true);
+      }
+
+      if (!generatedTitle) {
+        generatedTitle = generateJournalTitle(text, getSelectedJournalDate());
+      }
+
+      const titleInput = document.getElementById('journal-title-input');
+      if (titleInput) titleInput.value = generatedTitle;
+      syncJournalTitleHint();
+      Animations.toast('已生成主題標題', 'success');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = '生成主題';
       }
     }
-
-    if (!generatedTitle) {
-      generatedTitle = generateJournalTitle(text, getSelectedJournalDate());
-    }
-
-    const titleInput = document.getElementById('journal-title-input');
-    if (titleInput) titleInput.value = generatedTitle;
-    syncJournalTitleHint();
-    Animations.toast('已生成主題標題', 'success');
   }
 
   async function handleJournalRunAll() {
