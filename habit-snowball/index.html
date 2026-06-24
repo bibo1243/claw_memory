@@ -118,10 +118,10 @@
     })();
   </script>
   <script>
-    window.HABIT_SNOWBALL_VERSION = '20260624_1130';
+    window.HABIT_SNOWBALL_VERSION = '20260624_1640';
   </script>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>❄️</text></svg>">
-  <link rel="stylesheet" href="css/style.css?v=20260624_1130">
+  <link rel="stylesheet" href="css/style.css?v=20260624_1640">
 </head>
 <body>
   <!-- 飄浮白雲 (明亮主題) -->
@@ -171,8 +171,9 @@
           </button>
         </div>
       </div>
-      <div class="search-bar-wrapper">
+      <div class="search-bar-wrapper" style="position: relative;">
         <input type="text" id="journal-search-input" class="search-input" placeholder="搜尋標題、內容或關鍵字..." autocomplete="off">
+        <div id="search-keyword-suggestions" class="keyword-dropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); z-index: 100; max-height: 200px; overflow-y: auto; margin-top: 4px; box-shadow: var(--shadow-card);"></div>
       </div>
     </header>
 
@@ -388,8 +389,13 @@
                data-placeholder="寫下今天的行動、反思、卡點、收穫..."></div>
         </div>
 
-        <div class="journal-keywords-panel" id="journal-keywords-panel" style="display: none;"></div>
-
+        <div class="journal-keywords-container" id="journal-keywords-container" style="display: block; margin-bottom: 12px; margin-top: 8px;">
+          <div class="journal-keywords-panel" id="journal-keywords-panel" style="display: flex; flex-wrap: wrap; gap: 6px;"></div>
+          <div class="keyword-add-wrapper" style="position: relative; display: flex; align-items: center; margin-top: 8px;">
+            <input type="text" id="journal-keyword-input" class="form-input" placeholder="＋ 新增關鍵字" autocomplete="off" style="padding: 4px 10px; font-size: 12px; border-radius: 20px; height: 28px; width: 120px; margin: 0; border: 1px dashed var(--text-muted); background: transparent; color: var(--text-primary);">
+            <div id="keyword-autocomplete-dropdown" class="keyword-dropdown" style="display: none; position: absolute; top: 100%; left: 0; background: var(--bg-secondary); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); z-index: 100; max-height: 150px; overflow-y: auto; min-width: 120px; margin-top: 4px; box-shadow: var(--shadow-card);"></div>
+          </div>
+        </div>
         <!-- 日記圖片上傳與顯示區區塊 -->
         <div class="journal-image-section" style="margin-top: 16px; margin-bottom: 16px;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
@@ -549,11 +555,11 @@
     </div>
   </div>
 
-  <script src="js/scoring.js?v=20260624_1130"></script>
-  <script src="js/storage.js?v=20260624_1130"></script>
-  <script src="js/particles.js?v=20260624_1130"></script>
-  <script src="js/snowball.js?v=20260624_1130"></script>
-  <script src="js/animations.js?v=20260624_1130"></script>
-  <script src="js/app.js?v=20260624_1130"></script>
+  <script src="js/scoring.js?v=20260624_1640"></script>
+  <script src="js/storage.js?v=20260624_1640"></script>
+  <script src="js/particles.js?v=20260624_1640"></script>
+  <script src="js/snowball.js?v=20260624_1640"></script>
+  <script src="js/animations.js?v=20260624_1640"></script>
+  <script src="js/app.js?v=20260624_1640"></script>
 </body>
 </html>

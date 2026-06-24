@@ -469,14 +469,29 @@ const App = (() => {
       `請潤稿這篇日記：\n${text}`
     );
   }
+  function getAllUniqueKeywords() {
+    const journals = Storage.getJournals();
+    const unique = new Set();
+    journals.forEach(j => {
+      if (Array.isArray(j.keywords)) {
+        j.keywords.forEach(k => {
+          if (k) unique.add(k);
+        });
+      }
+    });
+    return Array.from(unique);
+  }
 
   async function generateAiJournalKeywords(text) {
+    const existingKeywords = getAllUniqueKeywords();
+    const existingStr = existingKeywords.length > 0
+      ? `我們目前已經有使用的關鍵字庫：[${existingKeywords.join(', ')}]。請優先從這些關鍵字中挑選適合的。如果沒有適合的，再自行發明。`
+      : '';
     return callGoogleAiJson(
-      '你是中文 SEO 編輯。請從日記中抽出 3 到 6 個最重要、可當作 SEO 標籤的繁體中文關鍵字。每個關鍵字請控制在 2 到 6 個字，不能是完整句子。輸出 JSON：{"keywords":["..."]}。',
+      `你是中文 SEO 編輯。${existingStr}請從日記中抽出 3 到 6 個最重要、可當作 SEO 標籤的繁體中文關鍵字。每個關鍵字請控制在 2 到 6 個字，不能是完整句子。輸出 JSON：{"keywords":["..."]}。`,
       `請抽取這篇日記的關鍵字：\n${text}`
     );
   }
-
   async function generateAiJournalTitle(text) {
     return callGoogleAiJson(
       '你是中文編輯。請根據整篇文章內容做總結，生成一個精煉、具主題感的繁體中文標題。不要照抄第一句，不要包含日期，標題長度控制在 10 到 24 個字。輸出 JSON：{"title":"..."}。',
@@ -552,6 +567,45 @@ const App = (() => {
     }));
   }
 
+  function initKeywordInput() {
+    const input = document.getElementById('journal-keyword-input');
+    const dropdown = document.getElementById('keyword-autocomplete-dropdown');
+    if (!input || !dropdown) return;
+
+    input.addEventListener('input', (e) => {
+      const val = e.target.value.trim().toLowerCase();
+      if (!val) {
+        dropdown.style.display = 'none';
+        return;
+      }
+      const existing = getAllUniqueKeywords();
+      const matches = existing.filter(k => k.toLowerCase().includes(val) && !journalDraftKeywords.includes(k));
+      
+      if (matches.length > 0) {
+        dropdown.innerHTML = matches.map(m => `<div class="keyword-dropdown-item" onclick="App.addJournalKeyword('${escapeHtml(m)}')" style="padding: 6px 12px; cursor: pointer; border-bottom: 1px solid var(--border-subtle); color: var(--text-primary); font-size: 12px;">${escapeHtml(m)}</div>`).join('');
+        dropdown.style.display = 'block';
+      } else {
+        dropdown.style.display = 'none';
+      }
+    });
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const val = input.value.trim();
+        if (val) {
+          addJournalKeyword(val);
+        }
+      }
+    });
+
+    document.addEventListener('click', (e) => {
+      if (e.target !== input && e.target !== dropdown && !dropdown.contains(e.target)) {
+        dropdown.style.display = 'none';
+      }
+    });
+  }
+
   async function init() {
     var loginIdentity = localStorage.getItem('login-identity');
     if (!loginIdentity) {
@@ -581,6 +635,7 @@ const App = (() => {
       btn.classList.toggle('active', activeAuthors.includes(btn.dataset.author));
     });
 
+    initKeywordInput();
     updateActiveStats();
 
     var streakResult = ScoringEngine.updateStreak(
@@ -1307,15 +1362,35 @@ const App = (() => {
 
     journalDraftKeywords = keywords;
     if (!keywords.length) {
-      panel.style.display = 'none';
       panel.innerHTML = '';
       return;
     }
 
-    panel.style.display = 'flex';
     panel.innerHTML = keywords
-      .map(keyword => `<span class="journal-keyword-chip">${escapeHtml(keyword)}</span>`)
+      .map(keyword => `
+        <span class="journal-keyword-chip" style="display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:12px; background:var(--bg-glass); border:1px solid var(--border-subtle); font-size:12px; color:var(--text-secondary);">
+          ${escapeHtml(keyword)}
+          <span class="keyword-remove" onclick="App.removeJournalKeyword('${escapeHtml(keyword)}')" style="cursor:pointer; color:var(--accent-negative); font-weight:bold;">&times;</span>
+        </span>
+      `)
       .join('');
+  }
+
+  function removeJournalKeyword(keywordToRemove) {
+    journalDraftKeywords = journalDraftKeywords.filter(k => k !== keywordToRemove);
+    updateJournalKeywordPanel(journalDraftKeywords);
+  }
+
+  function addJournalKeyword(keyword) {
+    const k = keyword.trim();
+    if (k && !journalDraftKeywords.includes(k)) {
+      journalDraftKeywords.push(k);
+      updateJournalKeywordPanel(journalDraftKeywords);
+    }
+    const input = document.getElementById('journal-keyword-input');
+    const dropdown = document.getElementById('keyword-autocomplete-dropdown');
+    if (input) input.value = '';
+    if (dropdown) dropdown.style.display = 'none';
   }
 
   function normalizeSeoKeywords(keywords, limit = 5) {
@@ -1876,16 +1951,6 @@ const App = (() => {
             '</div>' +
             '<input type="hidden" class="comment-selected-sticker" value="" />' +
           '</div>' +
-          '<div style="margin-bottom: 8px;">' +
-            '<label style="display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">標註分類 (可複選/選填)</label>' +
-            '<div class="quick-tags-container" style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px;">' +
-              '<span class="quick-tag-option" style="font-size: 11px; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border-subtle); background: rgba(255,255,255,0.02); color: var(--text-secondary); cursor: pointer;" onclick="App.toggleQuickTag(this)">讚賞 👏</span>' +
-              '<span class="quick-tag-option" style="font-size: 11px; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border-subtle); background: rgba(255,255,255,0.02); color: var(--text-secondary); cursor: pointer;" onclick="App.toggleQuickTag(this)">共鳴 ❤️</span>' +
-              '<span class="quick-tag-option" style="font-size: 11px; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border-subtle); background: rgba(255,255,255,0.02); color: var(--text-secondary); cursor: pointer;" onclick="App.toggleQuickTag(this)">提醒 💡</span>' +
-              '<span class="quick-tag-option" style="font-size: 11px; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border-subtle); background: rgba(255,255,255,0.02); color: var(--text-secondary); cursor: pointer;" onclick="App.toggleQuickTag(this)">反思 🧘</span>' +
-            '</div>' +
-            '<input type="text" class="comment-custom-tags" placeholder="輸入其他自訂標籤 (多個請用逗號隔開)" style="width: 100%; padding: 6px 10px; border-radius: 4px; border: 1px solid var(--border-subtle); background: rgba(0,0,0,0.1); color: var(--text-primary); font-size: 11px; outline: none; margin-top: 4px;" />' +
-          '</div>' +
           '<div style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px; width: 100%;">' +
             '<div class="comment-content-input" contenteditable="true" data-placeholder="寫下評論 (支援 Markdown 快速鍵，Ctrl+Enter 發送)..." style="width: 100%;" onkeydown="if((event.ctrlKey || event.metaKey) && event.key === \'Enter\') { event.preventDefault(); App.submitComment(\'' + entry.id + '\', this); }"></div>' +
             '<button type="button" class="btn btn-primary" style="align-self: flex-end; padding: 0 14px; font-size: 12px; height: 34px; font-weight: 600;" onclick="App.submitComment(\'' + entry.id + '\', this)">發送</button>' +
@@ -2158,10 +2223,42 @@ const App = (() => {
       btn.addEventListener('click', handleGlobalAuthorToggle);
     });
 
-    addEvent('journal-search-input', 'input', () => {
-      journalCurrentPage = 1;
-      renderJournal();
-    });
+    const mainSearchInput = document.getElementById('journal-search-input');
+    const searchSuggestions = document.getElementById('search-keyword-suggestions');
+    if (mainSearchInput) {
+      mainSearchInput.addEventListener('input', (e) => {
+        journalCurrentPage = 1;
+        renderJournal();
+
+        const val = e.target.value.trim().toLowerCase();
+        if (!val || !searchSuggestions) {
+          if (searchSuggestions) searchSuggestions.style.display = 'none';
+          return;
+        }
+
+        const existing = getAllUniqueKeywords();
+        const matches = existing.filter(k => k.toLowerCase().includes(val));
+
+        if (matches.length > 0) {
+          searchSuggestions.innerHTML = matches.map(m => `<div class="keyword-dropdown-item" onclick="document.getElementById('journal-search-input').value = '${escapeHtml(m)}'; document.getElementById('journal-search-input').dispatchEvent(new Event('input')); document.getElementById('search-keyword-suggestions').style.display='none';" style="padding: 8px 14px; cursor: pointer; border-bottom: 1px solid var(--border-subtle); color: var(--text-primary); font-size: 13px;">🔍 ${escapeHtml(m)}</div>`).join('');
+          searchSuggestions.style.display = 'block';
+        } else {
+          searchSuggestions.style.display = 'none';
+        }
+      });
+
+      document.addEventListener('click', (e) => {
+        if (searchSuggestions && e.target !== mainSearchInput && !searchSuggestions.contains(e.target)) {
+          searchSuggestions.style.display = 'none';
+        }
+      });
+
+      mainSearchInput.addEventListener('focus', (e) => {
+        if (e.target.value.trim() && searchSuggestions && searchSuggestions.innerHTML !== '') {
+          searchSuggestions.style.display = 'block';
+        }
+      });
+    }
 
     addEvent('btn-open-composer', 'click', () => {
       clearJournalDraft();
@@ -2226,7 +2323,9 @@ const App = (() => {
     regenerateSummary,
     setJournalPage,
     showJournalComposer,
-    hideJournalComposer
+    hideJournalComposer,
+    removeJournalKeyword,
+    addJournalKeyword
   };
 })();
 

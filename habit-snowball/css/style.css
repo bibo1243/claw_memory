@@ -1469,7 +1469,7 @@ body::before {
   right: 16px;
   display: flex;
   gap: 4px;
-  background: rgba(17, 22, 56, 0.6);
+  background: var(--bg-card);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   border: 1px solid var(--border-subtle);
@@ -1497,14 +1497,20 @@ body::before {
 
 .g-author-btn:hover {
   color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--bg-glass-hover);
 }
 
 .g-author-btn.active {
   background: rgba(168, 216, 234, 0.15);
-  color: #fff;
+  color: var(--text-primary);
   border: 1px solid rgba(168, 216, 234, 0.4);
   box-shadow: 0 0 10px rgba(168, 216, 234, 0.2);
+}
+
+body.light-theme .g-author-btn.active {
+  background: rgba(2, 132, 199, 0.15);
+  border-color: rgba(2, 132, 199, 0.4);
+  box-shadow: 0 0 10px rgba(2, 132, 199, 0.1);
 }
 
 /* Journal Compose Selector Active State */
@@ -1652,6 +1658,8 @@ body::before {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .app-title {
