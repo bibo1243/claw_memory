@@ -9,16 +9,16 @@ pkill -f "cloudflared tunnel" || true
 # 2. 清理舊的 log 檔案
 rm -f ~/tunnel.log
 
-# 3. 確保 Python CORS 代理程式正在執行 (監聽 Port 11435)
-if ! lsof -i :11435 >/dev/null 2>&1; then
+# 3. 確保 Python CORS 代理程式正在執行 (監聽 Port 11436)
+if ! lsof -i :11436 >/dev/null 2>&1; then
     echo "Starting Python CORS proxy..."
-    nohup python3 ~/ollama_cors_proxy.py > ~/ollama_proxy.log 2>&1 &
+    nohup python3 ~/ollama_cors_proxy.py 11436 > ~/ollama_proxy.log 2>&1 &
     sleep 2
 fi
 
-# 4. 啟動 Cloudflare 隧道指向 Python 代理 (11435)
+# 4. 啟動 Cloudflare 隧道指向 Python 代理 (11436)
 echo "Starting Cloudflare Tunnel..."
-nohup ~/cloudflared tunnel --url http://127.0.0.1:11435 > ~/tunnel.log 2>&1 &
+nohup ~/cloudflared tunnel --url http://127.0.0.1:11436 > ~/tunnel.log 2>&1 &
 
 # 5. 迴圈等待並解析隨機分配的 trycloudflare.com HTTPS 網址 (最長等待 30 秒)
 TUNNEL_URL=""
@@ -42,7 +42,7 @@ if [ ! -z "$TUNNEL_URL" ]; then
     # 7. 持續監控背景服務是否存活，如有任一服務掛掉則以 exit 1 退出，供 launchd 自動重啟
     echo "Monitoring background services..."
     while true; do
-        if ! lsof -i :11435 >/dev/null 2>&1; then
+        if ! lsof -i :11436 >/dev/null 2>&1; then
             echo "Error: Python CORS proxy died."
             exit 1
         fi
