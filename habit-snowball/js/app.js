@@ -531,23 +531,23 @@ const App = (() => {
     }
 
     if (useOllama && targetOllamaUrl) {
-      let timeoutId = null;
       try {
         const cleanUrl = targetOllamaUrl.replace(/\/$/, '');
-        const controller = new AbortController();
-        timeoutId = setTimeout(() => {
-          console.warn('Ollama request timed out after 15 seconds. Aborting...');
-          controller.abort();
-        }, 15000);
-
         let response = null;
         let lastOllamaError = null;
         for (const model of ['gemma4:e2b', 'gemma4:e4b']) {
+          let modelTimeoutId = null;
           try {
             console.log(`Connecting to local Ollama via Tunnel: ${targetOllamaUrl}, trying model: ${model}`);
+            const modelController = new AbortController();
+            modelTimeoutId = setTimeout(() => {
+              console.warn(`Ollama request for model ${model} timed out after 20 seconds. Aborting...`);
+              modelController.abort();
+            }, 20000);
+
             const res = await fetch(`${cleanUrl}/api/chat`, {
               method: 'POST',
-              signal: controller.signal,
+              signal: modelController.signal,
               headers: {
                 'Content-Type': 'application/json'
               },
@@ -565,6 +565,8 @@ const App = (() => {
               })
             });
 
+            if (modelTimeoutId) clearTimeout(modelTimeoutId);
+
             if (res.status === 404) {
               console.warn(`Model ${model} not found on Ollama server (404). Trying next model...`);
               continue;
@@ -577,15 +579,11 @@ const App = (() => {
             response = res;
             break;
           } catch (err) {
+            if (modelTimeoutId) clearTimeout(modelTimeoutId);
             lastOllamaError = err;
             console.error(`Ollama call with model ${model} failed:`, err);
-            if (err.name === 'AbortError') {
-              break;
-            }
           }
         }
-
-        if (timeoutId) clearTimeout(timeoutId);
 
         if (!response) {
           throw lastOllamaError || new Error('All local Ollama models failed');
