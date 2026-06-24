@@ -419,6 +419,67 @@ const App = (() => {
   }
 
   async function callGoogleAiJson(systemPrompt, userPrompt) {
+    // 1. Try local Ollama (192.168.3.86:11435) first
+    let useOllama = false;
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1500);
+      const testRes = await fetch('http://192.168.3.86:11435/', {
+        signal: controller.signal,
+        headers: { 'Accept': 'text/plain' }
+      });
+      clearTimeout(timeoutId);
+      if (testRes.ok) {
+        const text = await testRes.text();
+        if (text.includes('Ollama')) {
+          useOllama = true;
+        }
+      }
+    } catch (e) {
+      console.log('Local Ollama check failed or timed out, falling back to Gemini:', e);
+    }
+
+    if (useOllama) {
+      try {
+        console.log('Connecting to local Ollama (192.168.3.86:11435), using model: gemma4:e4b');
+        const response = await fetch('http://192.168.3.86:11435/api/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: 'gemma4:e4b',
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt }
+            ],
+            stream: false,
+            options: {
+              temperature: 0.4
+            },
+            format: 'json'
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error(`Ollama server returned status ${response.status}`);
+        }
+
+        const result = await response.json();
+        const content = result.message && result.message.content ? result.message.content.trim() : '';
+        if (!content) {
+          throw new Error('Ollama returned empty response content');
+        }
+
+        console.log('Successfully completed call using Ollama model gemma4:e4b');
+        return JSON.parse(content);
+      } catch (ollamaError) {
+        console.error('Ollama request failed, falling back to Gemini:', ollamaError);
+      }
+    }
+
+    // 2. Gemini fallback path
+    console.log('Using Gemini API fallback...');
     const apiKey = getGoogleApiKey();
     if (!apiKey) {
       throw new Error('missing_api_key');
@@ -429,6 +490,7 @@ const App = (() => {
 
     for (const model of models) {
       try {
+        console.log(`Calling Gemini API using model: ${model}`);
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`, {
           method: 'POST',
           headers: {
@@ -465,6 +527,7 @@ const App = (() => {
           throw new Error('google_ai_empty_response');
         }
 
+        console.log(`Successfully completed call using Gemini model: ${model}`);
         return JSON.parse(text);
       } catch (error) {
         console.error(`Google AI call with model ${model} failed:`, error);
