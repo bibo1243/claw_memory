@@ -136,6 +136,10 @@ const Storage = (() => {
 
   async function hydrateFromRemote() {
     try {
+      if (pendingSyncTimeout || pendingSyncPromise) {
+        console.log('Skipping remote hydration because local has pending upload.');
+        return;
+      }
       const remoteData = await fetchRemoteState();
       const localData = loadLocal();
 

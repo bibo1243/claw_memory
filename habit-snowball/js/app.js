@@ -1976,6 +1976,8 @@ ${existingStr}
       comments: originalEntry.comments
     });
     
+    expandedJournalEntryIds.add(entryId);
+    
     renderAll();
     Animations.toast('評論已發送', 'success');
   }

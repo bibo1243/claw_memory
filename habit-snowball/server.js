@@ -196,15 +196,6 @@ app.delete("/api/state/:userKey", async (req, res) => {
   }
 });
 
-app.get("/api/debug-db", async (req, res) => {
-  try {
-    const [rows] = await getPool().query("SELECT user_key, payload FROM user_states");
-    res.json(rows);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
 app.get("/api/ollama-tunnel", async (req, res) => {
   try {
     const [rows] = await getPool().query(
