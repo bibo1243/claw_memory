@@ -20,6 +20,8 @@ const App = (() => {
   let isJournalDatePickerOpen = false;
   let journalCurrentPage = 1;
   const journalPageSize = 5;
+  let ollamaTunnelUrl = '';
+  let ollamaStatus = 'testing'; // 'testing' | 'connected' | 'disconnected'
 
   const WEEKDAY_LABELS = ['日', '一', '二', '三', '四', '五', '六'];
   const GOOGLE_API_KEY_STORAGE_KEY = 'habit-snowball-google-api-key';
@@ -304,10 +306,80 @@ const App = (() => {
     updateJournalAiMode();
   }
 
+  async function checkOllamaConnection() {
+    ollamaStatus = 'testing';
+    updateJournalAiMode();
+
+    try {
+      const res = await fetch('/api/ollama-tunnel');
+      if (res.ok) {
+        const payload = await res.json();
+        ollamaTunnelUrl = payload.tunnelUrl ? payload.tunnelUrl.trim() : '';
+      }
+    } catch (e) {
+      console.error('Failed to fetch Ollama tunnel URL:', e);
+    }
+
+    if (!ollamaTunnelUrl) {
+      console.log('No Ollama tunnel URL configured in database.');
+      ollamaStatus = 'disconnected';
+      updateJournalAiMode();
+      return;
+    }
+
+    try {
+      console.log(`Checking if Ollama is reachable at tunnel: ${ollamaTunnelUrl}...`);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 1500);
+      const testRes = await fetch(ollamaTunnelUrl, {
+        signal: controller.signal,
+        headers: { 'Accept': 'text/plain' }
+      });
+      clearTimeout(timeoutId);
+      if (testRes.ok) {
+        const text = await testRes.text();
+        if (text.includes('Ollama')) {
+          console.log(`Ollama is reachable at tunnel: ${ollamaTunnelUrl}`);
+          ollamaStatus = 'connected';
+          updateJournalAiMode();
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn(`Ollama tunnel check failed: ${ollamaTunnelUrl}`, e);
+    }
+
+    ollamaStatus = 'disconnected';
+    updateJournalAiMode();
+  }
+
   function updateJournalAiMode() {
     const modeEl = document.getElementById('journal-ai-mode');
     if (!modeEl) return;
-    modeEl.textContent = getGoogleApiKey() ? 'Google AI 已啟用' : '本地模式';
+
+    if (ollamaStatus === 'testing') {
+      modeEl.textContent = '正在檢測 AI 連線...';
+      modeEl.style.color = '#8e92b2';
+      modeEl.style.backgroundColor = 'rgba(142, 146, 178, 0.1)';
+      modeEl.style.borderColor = 'rgba(142, 146, 178, 0.2)';
+    } else if (ollamaStatus === 'connected') {
+      modeEl.textContent = '🟢 本地 AI (gemma4)';
+      modeEl.style.color = '#10b981';
+      modeEl.style.backgroundColor = 'rgba(16, 185, 129, 0.1)';
+      modeEl.style.borderColor = 'rgba(16, 185, 129, 0.2)';
+    } else {
+      if (getGoogleApiKey()) {
+        modeEl.textContent = '🟡 雲端 AI (Gemini)';
+        modeEl.style.color = '#f59e0b';
+        modeEl.style.backgroundColor = 'rgba(245, 158, 11, 0.1)';
+        modeEl.style.borderColor = 'rgba(245, 158, 11, 0.2)';
+      } else {
+        modeEl.textContent = '🔴 AI 未啟動 (無金鑰)';
+        modeEl.style.color = '#ef4444';
+        modeEl.style.backgroundColor = 'rgba(239, 68, 68, 0.1)';
+        modeEl.style.borderColor = 'rgba(239, 68, 68, 0.2)';
+      }
+    }
   }
 
   function setJournalAiButtonsDisabled(disabled, label) {
@@ -419,30 +491,50 @@ const App = (() => {
   }
 
   async function callGoogleAiJson(systemPrompt, userPrompt) {
-    // 1. Try local Ollama (192.168.3.86:11435) first
+    // 1. Try local Ollama (via Cloudflare Tunnel) first if connected
     let useOllama = false;
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 1500);
-      const testRes = await fetch('http://192.168.3.86:11435/', {
-        signal: controller.signal,
-        headers: { 'Accept': 'text/plain' }
-      });
-      clearTimeout(timeoutId);
-      if (testRes.ok) {
-        const text = await testRes.text();
-        if (text.includes('Ollama')) {
-          useOllama = true;
+    let targetOllamaUrl = ollamaTunnelUrl;
+
+    if (ollamaStatus === 'connected' && targetOllamaUrl) {
+      useOllama = true;
+    } else {
+      // Lazy synchronization check if not connected, in case the tunnel URL was just updated
+      try {
+        console.log('Ollama not connected. Performing lazy check for updated tunnel...');
+        const res = await fetch('/api/ollama-tunnel');
+        if (res.ok) {
+          const payload = await res.json();
+          const freshUrl = payload.tunnelUrl ? payload.tunnelUrl.trim() : '';
+          if (freshUrl) {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 1500);
+            const testRes = await fetch(freshUrl, {
+              signal: controller.signal,
+              headers: { 'Accept': 'text/plain' }
+            });
+            clearTimeout(timeoutId);
+            if (testRes.ok) {
+              const text = await testRes.text();
+              if (text.includes('Ollama')) {
+                useOllama = true;
+                targetOllamaUrl = freshUrl;
+                ollamaTunnelUrl = freshUrl;
+                ollamaStatus = 'connected';
+                updateJournalAiMode();
+              }
+            }
+          }
         }
+      } catch (e) {
+        console.log('Lazy Ollama check failed or timed out:', e);
       }
-    } catch (e) {
-      console.log('Local Ollama check failed or timed out, falling back to Gemini:', e);
     }
 
-    if (useOllama) {
+    if (useOllama && targetOllamaUrl) {
       try {
-        console.log('Connecting to local Ollama (192.168.3.86:11435), using model: gemma4:e4b');
-        const response = await fetch('http://192.168.3.86:11435/api/chat', {
+        console.log(`Connecting to local Ollama via Tunnel: ${targetOllamaUrl}, using model: gemma4:e4b`);
+        const cleanUrl = targetOllamaUrl.replace(/\/$/, '');
+        const response = await fetch(`${cleanUrl}/api/chat`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -471,10 +563,12 @@ const App = (() => {
           throw new Error('Ollama returned empty response content');
         }
 
-        console.log('Successfully completed call using Ollama model gemma4:e4b');
+        console.log('Successfully completed call using Ollama model gemma4:e4b via Tunnel');
         return JSON.parse(content);
       } catch (ollamaError) {
         console.error('Ollama request failed, falling back to Gemini:', ollamaError);
+        ollamaStatus = 'disconnected';
+        updateJournalAiMode();
       }
     }
 
@@ -755,6 +849,7 @@ ${existingStr}
     }
 
     hydrateGoogleApiKeyInput();
+    checkOllamaConnection();
 
     // No onboarding toast anymore
     /*

@@ -196,6 +196,38 @@ app.delete("/api/state/:userKey", async (req, res) => {
   }
 });
 
+app.get("/api/ollama-tunnel", async (req, res) => {
+  try {
+    const [rows] = await getPool().query(
+      "SELECT payload FROM user_states WHERE user_key = 'ollama_tunnel' LIMIT 1"
+    );
+    if (rows.length) {
+      res.json(rows[0].payload);
+    } else {
+      res.json({ tunnelUrl: "" });
+    }
+  } catch (error) {
+    console.error("Failed to get ollama-tunnel:", error);
+    res.status(500).json({ error: "db_error" });
+  }
+});
+
+app.post("/api/ollama-tunnel", async (req, res) => {
+  try {
+    const { tunnelUrl } = req.body || {};
+    await getPool().query(
+      `INSERT INTO user_states (user_key, payload)
+       VALUES ('ollama_tunnel', ?)
+       ON DUPLICATE KEY UPDATE payload = VALUES(payload)`,
+      [JSON.stringify({ tunnelUrl: tunnelUrl || "" })]
+    );
+    res.json({ ok: true, tunnelUrl: tunnelUrl || "" });
+  } catch (error) {
+    console.error("Failed to save ollama-tunnel:", error);
+    res.status(500).json({ error: "db_error" });
+  }
+});
+
 app.get("*", (_req, res) => {
   res.sendFile(path.join(staticDir, "index.html"));
 });
