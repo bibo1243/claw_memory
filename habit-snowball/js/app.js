@@ -533,7 +533,6 @@ const App = (() => {
     if (useOllama && targetOllamaUrl) {
       let timeoutId = null;
       try {
-        console.log(`Connecting to local Ollama via Tunnel: ${targetOllamaUrl}, using model: gemma4:e2b`);
         const cleanUrl = targetOllamaUrl.replace(/\/$/, '');
         const controller = new AbortController();
         timeoutId = setTimeout(() => {
@@ -541,30 +540,55 @@ const App = (() => {
           controller.abort();
         }, 15000);
 
-        const response = await fetch(`${cleanUrl}/api/chat`, {
-          method: 'POST',
-          signal: controller.signal,
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            model: 'gemma4:e2b',
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: userPrompt }
-            ],
-            stream: false,
-            options: {
-              temperature: 0.4
-            },
-            format: 'json'
-          })
-        });
+        let response = null;
+        let lastOllamaError = null;
+        for (const model of ['gemma4:e2b', 'gemma4:e4b']) {
+          try {
+            console.log(`Connecting to local Ollama via Tunnel: ${targetOllamaUrl}, trying model: ${model}`);
+            const res = await fetch(`${cleanUrl}/api/chat`, {
+              method: 'POST',
+              signal: controller.signal,
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                model: model,
+                messages: [
+                  { role: 'system', content: systemPrompt },
+                  { role: 'user', content: userPrompt }
+                ],
+                stream: false,
+                options: {
+                  temperature: 0.4
+                },
+                format: 'json'
+              })
+            });
+
+            if (res.status === 404) {
+              console.warn(`Model ${model} not found on Ollama server (404). Trying next model...`);
+              continue;
+            }
+
+            if (!res.ok) {
+              throw new Error(`Ollama server returned status ${res.status}`);
+            }
+
+            response = res;
+            break;
+          } catch (err) {
+            lastOllamaError = err;
+            console.error(`Ollama call with model ${model} failed:`, err);
+            if (err.name === 'AbortError') {
+              break;
+            }
+          }
+        }
 
         if (timeoutId) clearTimeout(timeoutId);
 
-        if (!response.ok) {
-          throw new Error(`Ollama server returned status ${response.status}`);
+        if (!response) {
+          throw lastOllamaError || new Error('All local Ollama models failed');
         }
 
         const result = await response.json();
@@ -573,7 +597,7 @@ const App = (() => {
           throw new Error('Ollama returned empty response content');
         }
 
-        console.log('Successfully completed call using Ollama model gemma4:e2b via Tunnel');
+        console.log('Successfully completed call using Ollama model via Tunnel');
         return JSON.parse(content);
       } catch (ollamaError) {
         if (timeoutId) clearTimeout(timeoutId);
