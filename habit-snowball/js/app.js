@@ -640,7 +640,7 @@ ${existingStr}
     var savedTheme = localStorage.getItem('theme-preference') || 'light';
     applyTheme(savedTheme);
 
-    await Storage.hydrateFromRemote();
+    // Load local cache immediately to prevent blank screen while fetching remote state
     data = Storage.load();
     setSelectedJournalDate(new Date());
 
@@ -693,9 +693,12 @@ ${existingStr}
 
     hydrateGoogleApiKeyInput();
 
+    // No onboarding toast anymore
+    /*
     if (data.habits.length === 0) {
       showOnboarding();
     }
+    */
   }
 
   function selectLoginIdentity(author) {
@@ -1829,7 +1832,7 @@ ${existingStr}
     
     var userPrompt = '日記內容：\n' + journalContent + '\n\n對話評論：\n' + commentsText;
     
-    var systemPrompt = '請總結給定的日誌與其評論對話群。請以繁體中文撰寫，總結出這段日精進及評論的重點與有價值之處。字數請控制在 150 字內，口吻需要客觀、溫暖且有建設性。請務必輸出 JSON 格式：{"summary": "..."}。不要輸出 any markdown 或其他標記。';
+    var systemPrompt = '請分析給定的日記內容與下方的讀者對話評論。請以繁體中文撰寫一段『AI 對話總結、點評與點評』：1. 總結日記的重點與作者的精進收穫；2. 對評論區的留言進行點評與回應（例如分析評論者的反饋或點評雙方的對話互動）；3. 以「個人成長」的觀點出發，點評作者在該日記事件中有哪些可以改進或做得更好的地方，並提出至少三項具體的行動方案。字數請控制在 300 字以內，口吻需客觀、溫暖、富有洞察力且有建設性。請務必輸出 JSON 格式：{"summary": "..."}。不要輸出任何 markdown 或其他標記。';
     
     var result = await callGoogleAiJson(systemPrompt, userPrompt);
     return result.summary || '';
@@ -1955,7 +1958,7 @@ ${existingStr}
           commentsListHtml +
         '</div>' +
         aiSummarySectionHtml +
-        '<div class="add-comment-box" style="margin-top: 16px; padding: 12px; border-radius: var(--radius-md); background: rgba(0,0,0,0.15); border: 1px solid var(--border-subtle);">' +
+        '<div class="add-comment-box" style="margin-top: 16px; padding: 12px; border-radius: var(--radius-md); background: var(--bg-comment-box); border: 1px solid var(--border-subtle);">' +
           '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">' +
             '<span style="font-size: 12px; font-weight: 600; color: var(--text-secondary);">新增評論</span>' +
             '<div class="comment-author-selector" style="display: flex; gap: 6px;">' +
@@ -1965,7 +1968,7 @@ ${existingStr}
           '</div>' +
           '<div style="margin-bottom: 8px;">' +
             '<label style="display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">選擇貼圖回饋 (選填)</label>' +
-            '<div class="stickers-picker" style="display: flex; flex-wrap: wrap; gap: 4px; max-height: 60px; overflow-y: auto; padding: 4px; border-radius: 4px; background: rgba(0,0,0,0.2);">' +
+            '<div class="stickers-picker" style="display: flex; flex-wrap: wrap; gap: 4px; max-height: 60px; overflow-y: auto; padding: 4px; border-radius: 4px; background: var(--bg-sticker-picker);">' +
               stickersSelectorHtml +
             '</div>' +
             '<input type="hidden" class="comment-selected-sticker" value="" />' +

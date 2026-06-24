@@ -24,6 +24,8 @@
   --accent-negative: #ef4444;
   --border-subtle: rgba(255, 255, 255, 0.06);
   --border-hover: rgba(255, 255, 255, 0.12);
+  --bg-comment-box: rgba(0, 0, 0, 0.15);
+  --bg-sticker-picker: rgba(0, 0, 0, 0.2);
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 20px;
@@ -1464,9 +1466,7 @@ body::before {
 
 /* ---------- Author Selectors & Tags (Neon Theme) ---------- */
 .global-author-toggle {
-  position: absolute;
-  top: 16px;
-  right: 16px;
+  position: relative;
   display: flex;
   gap: 4px;
   background: var(--bg-card);
@@ -2003,7 +2003,9 @@ body.light-theme {
   --border-hover: rgba(0, 0, 0, 0.12);
   --shadow-card: 0 4px 20px rgba(0, 0, 0, 0.05);
   --shadow-glow: 0 0 30px rgba(2, 132, 199, 0.08);
-  --bg-header-nav: rgba(255, 255, 255, 0.95);
+  --bg-header-nav: rgba(230, 242, 235, 0.95); /* Elegant light green sage header */
+  --bg-comment-box: rgba(255, 255, 255, 0.9); /* Soft bright cards */
+  --bg-sticker-picker: #f1f5f9; /* Bright and soft light grey background */
   --bg-overlay: rgba(240, 244, 248, 0.92);
 }
 
