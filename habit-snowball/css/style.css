@@ -945,6 +945,17 @@ body::before {
   background: rgba(239, 68, 68, 0.08);
 }
 
+.history-delete-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.history-delete-btn:disabled:hover {
+  color: var(--text-muted);
+  border-color: var(--border-subtle);
+  background: transparent;
+}
+
 .journal-composer-card {
   display: flex;
   flex-direction: column;
@@ -1358,6 +1369,48 @@ body::before {
   background: rgba(168, 216, 234, 0.15);
   border: 1px solid rgba(168, 216, 234, 0.3);
   color: var(--accent-1);
+}
+
+.ai-summary-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(168, 216, 234, 0.08);
+  border: 1px solid rgba(168, 216, 234, 0.18);
+}
+
+.ai-summary-status-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.ai-summary-status-model {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.ai-summary-spinner {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid rgba(168, 216, 234, 0.22);
+  border-top-color: var(--accent-1);
+  animation: aiSummarySpin 0.85s linear infinite;
+  flex: 0 0 auto;
+}
+
+@keyframes aiSummarySpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .celebration-overlay {

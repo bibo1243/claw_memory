@@ -22,6 +22,7 @@ const App = (() => {
   const journalBatchSize = 3;
   let isLoadingMoreJournalEntries = false;
   let hasDeferredSyncRender = false;
+  let summaryLoadingStates = {};
   let ollamaTunnelUrl = '';
   let ollamaStatus = 'testing'; // 'testing' | 'connected' | 'disconnected'
 
@@ -509,7 +510,20 @@ const App = (() => {
     // Deprecated: replaced by setupWysiwygEditor
   }
 
-  async function callGoogleAiJson(systemPrompt, userPrompt) {
+  function setSummaryLoadingState(entryId, nextState) {
+    if (!entryId) return;
+    if (nextState) {
+      summaryLoadingStates[entryId] = nextState;
+    } else {
+      delete summaryLoadingStates[entryId];
+    }
+  }
+
+  async function callGoogleAiJson(systemPrompt, userPrompt, options) {
+    options = options || {};
+    var includeMeta = options.includeMeta === true;
+    var onStatus = typeof options.onStatus === 'function' ? options.onStatus : null;
+
     // 1. Try local Ollama (via Cloudflare Tunnel) first if connected
     let useOllama = false;
     let targetOllamaUrl = ollamaTunnelUrl;
@@ -557,6 +571,13 @@ const App = (() => {
         for (const model of ['gemma4:e2b', 'gemma4:e4b']) {
           let modelTimeoutId = null;
           try {
+            if (onStatus) {
+              onStatus({
+                provider: '本地 AI',
+                providerKey: 'ollama',
+                model: model
+              });
+            }
             console.log(`Connecting to local Ollama via Tunnel: ${targetOllamaUrl}, trying model: ${model}`);
             const modelController = new AbortController();
             modelTimeoutId = setTimeout(() => {
@@ -595,6 +616,7 @@ const App = (() => {
               throw new Error(`Ollama server returned status ${res.status}`);
             }
 
+            res.__model = model;
             response = res;
             break;
           } catch (err) {
@@ -615,7 +637,18 @@ const App = (() => {
         }
 
         console.log('Successfully completed call using Ollama model via Tunnel');
-        return JSON.parse(content);
+        var parsedOllama = JSON.parse(content);
+        if (includeMeta) {
+          return {
+            data: parsedOllama,
+            meta: {
+              provider: '本地 AI',
+              providerKey: 'ollama',
+              model: response && response.__model ? response.__model : 'gemma4'
+            }
+          };
+        }
+        return parsedOllama;
       } catch (ollamaError) {
         console.error('Ollama request failed, falling back to Gemini:', ollamaError);
         ollamaStatus = 'disconnected';
@@ -635,6 +668,13 @@ const App = (() => {
 
     for (const model of models) {
       try {
+        if (onStatus) {
+          onStatus({
+            provider: 'Google AI',
+            providerKey: 'gemini',
+            model: model
+          });
+        }
         console.log(`Calling Gemini API using model: ${model}`);
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`, {
           method: 'POST',
@@ -673,7 +713,18 @@ const App = (() => {
         }
 
         console.log(`Successfully completed call using Gemini model: ${model}`);
-        return JSON.parse(text);
+        var parsedGemini = JSON.parse(text);
+        if (includeMeta) {
+          return {
+            data: parsedGemini,
+            meta: {
+              provider: 'Google AI',
+              providerKey: 'gemini',
+              model: model
+            }
+          };
+        }
+        return parsedGemini;
       } catch (error) {
         console.error(`Google AI call with model ${model} failed:`, error);
         lastError = error;
@@ -2323,7 +2374,7 @@ ${existingStr}
     }
   }
 
-  async function generateAiJournalSummary(journalContent, comments) {
+  async function generateAiJournalSummary(journalContent, comments, options) {
     var commentsText = comments.map(function(c) {
       var t = (c.tags || []).join(', ');
       var sticker = c.sticker ? ' [貼圖: ' + c.sticker + ']' : '';
@@ -2334,8 +2385,14 @@ ${existingStr}
     
     var systemPrompt = '請分析給定的日記內容與下方的讀者對話評論。請以繁體中文撰寫一段「AI 對話總結、點評與建議」。內容請包含：1. 總結日記的重點與作者的精進收穫；2. 對評論區的留言進行點評與回應（例如分析評論者的反饋或點評雙方的對話互動）；3. 以個人成長的觀點出發，點評作者在該日記事件中有哪些可以改進或做得更好的地方，並提出至少三項具體的行動方案。字數請控制在 300 字以內，口吻需客觀、溫暖、富有洞察力且有建設性。輸出格式必須是清楚分段的純文字：若有條列，請務必使用「1. ...」「2. ...」「3. ...」這種格式，而且每一點都要獨立換行、各自成段，絕對不能把 1、2、3 寫在同一行或同一段裡。請務必輸出 JSON 格式：{"summary": "..."}。summary 欄位內可以包含換行字元，但不要輸出 markdown code fence、HTML、星號或其他額外標記。';
     
-    var result = await callGoogleAiJson(systemPrompt, userPrompt);
-    return result.summary || '';
+    var result = await callGoogleAiJson(systemPrompt, userPrompt, {
+      includeMeta: true,
+      onStatus: options && options.onStatus
+    });
+    return {
+      summary: (result.data && result.data.summary) || '',
+      meta: result.meta || null
+    };
   }
 
   async function generateSummary(entryId) {
@@ -2354,20 +2411,40 @@ ${existingStr}
       return;
     }
     
+    setSummaryLoadingState(entryId, {
+      provider: ollamaStatus === 'connected' ? '本地 AI' : 'Google AI',
+      model: ollamaStatus === 'connected' ? 'gemma4:e2b' : GOOGLE_GEMINI_MODEL
+    });
+    renderJournal();
     Animations.toast('AI 總結生成中...', 'info');
     try {
-      var summaryText = await generateAiJournalSummary(entry.polishedContent || entry.content || '', comments);
+      var summaryResult = await generateAiJournalSummary(entry.polishedContent || entry.content || '', comments, {
+        onStatus: function(status) {
+          setSummaryLoadingState(entryId, {
+            provider: status.provider,
+            model: status.model
+          });
+          renderJournal();
+        }
+      });
+      var summaryText = summaryResult.summary;
       if (summaryText) {
         Storage.updateJournalEntry(entryId, {
           aiSummary: summaryText
         });
+        setSummaryLoadingState(entryId, null);
         renderAll();
-        const source = ollamaStatus === 'connected' ? '本地 AI (gemma4)' : 'Google AI';
+        var sourceMeta = summaryResult.meta || {};
+        var source = sourceMeta.provider && sourceMeta.model
+          ? `${sourceMeta.provider} (${sourceMeta.model})`
+          : (ollamaStatus === 'connected' ? '本地 AI (gemma4)' : 'Google AI');
         Animations.toast(`已成功生成 ${source} 對話總結`, 'success');
       } else {
         throw new Error('empty_summary');
       }
     } catch (err) {
+      setSummaryLoadingState(entryId, null);
+      renderJournal();
       console.error('AI Summary generation failed:', err);
       Animations.toast('AI 總結生成失敗，請確認 API Key 是否正確及網路是否暢通', 'danger');
     }
@@ -2380,6 +2457,7 @@ ${existingStr}
   function renderCommentsSection(entry, searchQuery) {
     var comments = Array.isArray(entry.comments) ? entry.comments : [];
     var aiSummary = entry.aiSummary || '';
+    var summaryLoadingState = summaryLoadingStates[entry.id] || null;
     
     var STICKERS = [
       '👍', '❤️', '👏', '🎉', '💪', '🔥', '🌟', '😍', '😂', '🤔',
@@ -2429,20 +2507,34 @@ ${existingStr}
 
     var aiSummarySectionHtml = '';
     if (comments.length > 0) {
+      var summaryStatusHtml = summaryLoadingState
+        ? '<div class="ai-summary-status is-loading">' +
+            '<span class="ai-summary-spinner"></span>' +
+            '<div>' +
+              '<div class="ai-summary-status-title">AI 正在總結中...</div>' +
+              '<div class="ai-summary-status-model">目前模型：' + escapeHtml(summaryLoadingState.provider + ' / ' + summaryLoadingState.model) + '</div>' +
+            '</div>' +
+          '</div>'
+        : '';
       if (aiSummary) {
         aiSummarySectionHtml = '<div class="ai-summary-card" style="margin-top: 16px; padding: 14px; border-radius: var(--radius-md); background: rgba(168, 216, 234, 0.05); border: 1px solid rgba(168, 216, 234, 0.15);">' +
             '<div style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px;">' +
               '<span style="font-size: 16px;">🤖</span>' +
               '<strong style="font-size: 14px; color: var(--accent-1);">AI 對話總結</strong>' +
-              '<button type="button" class="history-delete-btn" style="margin-left: auto; padding: 2px 8px; font-size: 10px;" onclick="App.regenerateSummary(\'' + entry.id + '\')">重新總結</button>' +
+              '<button type="button" class="history-delete-btn" style="margin-left: auto; padding: 2px 8px; font-size: 10px;" onclick="App.regenerateSummary(\'' + entry.id + '\')" ' + (summaryLoadingState ? 'disabled' : '') + '>' + (summaryLoadingState ? '總結中...' : '重新總結') + '</button>' +
             '</div>' +
+            summaryStatusHtml +
             '<div class="ai-summary-body" style="font-size: 13px; color: var(--text-secondary); line-height: 1.75;">' + formatAiSummaryHtml(aiSummary) + '</div>' +
           '</div>';
       } else {
-        aiSummarySectionHtml = '<div style="margin-top: 16px; text-align: center;">' +
-            '<button type="button" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px;" onclick="App.generateSummary(\'' + entry.id + '\')">' +
-              '<span>✨</span> 生成 AI 對話總結' +
-            '</button>' +
+        aiSummarySectionHtml = '<div class="ai-summary-card" style="margin-top: 16px; padding: 14px; border-radius: var(--radius-md); background: rgba(168, 216, 234, 0.05); border: 1px solid rgba(168, 216, 234, 0.15);">' +
+            (summaryLoadingState
+              ? summaryStatusHtml + '<div style="font-size: 12px; color: var(--text-muted); line-height: 1.7;">正在分析日記與評論，完成後會自動顯示在這裡。</div>'
+              : '<div style="text-align: center;">' +
+                  '<button type="button" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px;" onclick="App.generateSummary(\'' + entry.id + '\')">' +
+                    '<span>✨</span> 生成 AI 對話總結' +
+                  '</button>' +
+                '</div>') +
           '</div>';
       }
     }
