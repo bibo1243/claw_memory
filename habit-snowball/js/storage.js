@@ -311,6 +311,14 @@ const Storage = (() => {
     });
   }
 
+  function stopSync() {
+    if (syncTimer) {
+      clearInterval(syncTimer);
+      syncTimer = null;
+    }
+  }
+
+
   function syncRemote(data) {
     if (!isSyncingFromRemote) {
       scheduleSync(data);
@@ -573,6 +581,7 @@ const Storage = (() => {
     getWeeklyData,
     clearAllData,
     startSync,
+    stopSync,
     hydrateFromRemote,
     setSyncCallback,
     removeRecord,

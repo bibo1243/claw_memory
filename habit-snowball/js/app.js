@@ -2644,15 +2644,29 @@ ${existingStr}
     addEvent('btn-save-sync-user', 'click', () => {
       const input = document.getElementById('sync-user-input');
       const val = input ? input.value.trim() : 'default';
-      localStorage.setItem('simulated-current-user', val || 'default');
+      const currentUser = localStorage.getItem('simulated-current-user') || 'default';
+      const targetUser = val || 'default';
+
+      if (targetUser !== currentUser) {
+        // 1. 立即停止背景同步，防止將舊資料或空資料上傳覆蓋新帳號
+        if (window.Storage && typeof window.Storage.stopSync === 'function') {
+          window.Storage.stopSync();
+        }
+
+        // 2. 清除本地快取，避免與新帳號資料混雜合併造成污染
+        localStorage.removeItem('habit-snowball-data');
+
+        // 3. 更新同步帳號
+        localStorage.setItem('simulated-current-user', targetUser);
+      }
 
       const statusMsg = document.getElementById('sync-status-msg');
       if (statusMsg) statusMsg.style.display = 'block';
 
-      setTimeout(() => {
-        window.location.reload();
-      }, 1000);
+      // 4. 立即重整以防任何背景延遲觸發
+      window.location.reload();
     });
+
 
     addEvent('btn-reset-all-data', 'click', resetAllData);
 
