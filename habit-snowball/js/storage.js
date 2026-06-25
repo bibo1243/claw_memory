@@ -79,13 +79,15 @@ const Storage = (() => {
   }
 
   function hasMeaningfulLocalData(data) {
-    return data.habits.length > 0 ||
-      data.records.length > 0 ||
-      data.journalEntries.length > 0 ||
-      (data.stats.totalPoints || 0) !== 0 ||
-      (data.stats.totalResisted || 0) !== 0 ||
-      (data.stats.currentStreak || 0) !== 0 ||
-      (data.stats.longestStreak || 0) !== 0;
+    if (!data) return false;
+    const stats = data.stats || {};
+    return (Array.isArray(data.habits) && data.habits.length > 0) ||
+      (Array.isArray(data.records) && data.records.length > 0) ||
+      (Array.isArray(data.journalEntries) && data.journalEntries.length > 0) ||
+      (stats.totalPoints || 0) !== 0 ||
+      (stats.totalResisted || 0) !== 0 ||
+      (stats.currentStreak || 0) !== 0 ||
+      (stats.longestStreak || 0) !== 0;
   }
 
   async function fetchRemoteState() {
@@ -121,6 +123,11 @@ const Storage = (() => {
   }
 
   function scheduleSync(data) {
+    if (!hasMeaningfulLocalData(data)) {
+      console.warn('Skip empty state upload to protect remote data from accidental overwrite.');
+      return;
+    }
+
     if (pendingSyncTimeout) {
       clearTimeout(pendingSyncTimeout);
     }
@@ -137,53 +144,102 @@ const Storage = (() => {
     }, 300);
   }
 
+  function cloneValue(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function preferRicherText(a, b) {
+    const aa = typeof a === 'string' ? a : '';
+    const bb = typeof b === 'string' ? b : '';
+    if (!aa) return bb;
+    if (!bb) return aa;
+    return aa.length >= bb.length ? aa : bb;
+  }
+
+  function mergeStringArrays(a, b) {
+    const out = [];
+    (Array.isArray(a) ? a : []).concat(Array.isArray(b) ? b : []).forEach(item => {
+      if (typeof item === 'string' && item.trim() && !out.includes(item.trim())) {
+        out.push(item.trim());
+      }
+    });
+    return out;
+  }
+
+  function journalCompletenessScore(entry) {
+    if (!entry) return 0;
+    return (entry.content ? entry.content.length : 0) +
+      (entry.polishedContent ? entry.polishedContent.length : 0) +
+      (entry.aiSummary ? entry.aiSummary.length : 0) +
+      (Array.isArray(entry.comments) ? entry.comments.length * 1000 : 0) +
+      (Array.isArray(entry.keywords) ? entry.keywords.length * 50 : 0);
+  }
+
+  function mergeJournalEntry(remoteEntry, localEntry) {
+    const remoteScore = journalCompletenessScore(remoteEntry);
+    const localScore = journalCompletenessScore(localEntry);
+    const base = cloneValue(remoteScore >= localScore ? remoteEntry : localEntry);
+
+    base.id = remoteEntry.id || localEntry.id;
+    base.author = remoteEntry.author || localEntry.author || '小葦';
+    base.createdAt = remoteEntry.createdAt || localEntry.createdAt || new Date().toISOString();
+    base.title = remoteScore >= localScore
+      ? (remoteEntry.title || localEntry.title || '')
+      : (localEntry.title || remoteEntry.title || '');
+    base.content = preferRicherText(remoteEntry.content, localEntry.content);
+    base.polishedContent = preferRicherText(remoteEntry.polishedContent, localEntry.polishedContent);
+    base.aiSummary = preferRicherText(remoteEntry.aiSummary, localEntry.aiSummary);
+    base.keywords = mergeStringArrays(remoteEntry.keywords, localEntry.keywords);
+
+    const commentsMap = new Map();
+    (Array.isArray(remoteEntry.comments) ? remoteEntry.comments : []).forEach(c => {
+      if (c && c.id) commentsMap.set(c.id, cloneValue(c));
+    });
+    (Array.isArray(localEntry.comments) ? localEntry.comments : []).forEach(c => {
+      if (!c || !c.id) return;
+      const existing = commentsMap.get(c.id);
+      commentsMap.set(c.id, existing ? { ...existing, ...cloneValue(c) } : cloneValue(c));
+    });
+    base.comments = Array.from(commentsMap.values())
+      .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+
+    return base;
+  }
+
   function mergeStates(local, remote) {
     if (!local) return remote || getDefaultData();
     if (!remote) return local || getDefaultData();
+    if (!hasMeaningfulLocalData(local) && hasMeaningfulLocalData(remote)) {
+      return cloneValue(remote);
+    }
+    if (hasMeaningfulLocalData(local) && !hasMeaningfulLocalData(remote)) {
+      return cloneValue(local);
+    }
 
     const habitsMap = new Map();
-    (remote.habits || []).forEach(h => habitsMap.set(h.id, h));
+    (remote.habits || []).forEach(h => habitsMap.set(h.id, cloneValue(h)));
     (local.habits || []).forEach(h => {
-      habitsMap.set(h.id, h);
+      habitsMap.set(h.id, { ...(habitsMap.get(h.id) || {}), ...cloneValue(h) });
     });
     const mergedHabits = Array.from(habitsMap.values());
 
     const recordsMap = new Map();
-    (remote.records || []).forEach(r => recordsMap.set(r.id, r));
-    (local.records || []).forEach(r => recordsMap.set(r.id, r));
+    (remote.records || []).forEach(r => recordsMap.set(r.id, cloneValue(r)));
+    (local.records || []).forEach(r => recordsMap.set(r.id, { ...(recordsMap.get(r.id) || {}), ...cloneValue(r) }));
     const mergedRecords = Array.from(recordsMap.values())
       .sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0));
 
     const journalsMap = new Map();
     (remote.journalEntries || []).forEach(j => {
-      journalsMap.set(j.id, JSON.parse(JSON.stringify(j)));
+      journalsMap.set(j.id, cloneValue(j));
     });
 
     (local.journalEntries || []).forEach(localEntry => {
       const remoteEntry = journalsMap.get(localEntry.id);
       if (!remoteEntry) {
-        journalsMap.set(localEntry.id, JSON.parse(JSON.stringify(localEntry)));
+        journalsMap.set(localEntry.id, cloneValue(localEntry));
       } else {
-        const mergedEntry = { ...remoteEntry };
-
-        if (localEntry.polishedContent && !remoteEntry.polishedContent) {
-          mergedEntry.polishedContent = localEntry.polishedContent;
-        }
-        if (localEntry.aiSummary && !remoteEntry.aiSummary) {
-          mergedEntry.aiSummary = localEntry.aiSummary;
-        }
-        if (localEntry.content && (!remoteEntry.content || localEntry.content.length > remoteEntry.content.length)) {
-          mergedEntry.content = localEntry.content;
-          mergedEntry.title = localEntry.title || mergedEntry.title;
-        }
-
-        const commentsMap = new Map();
-        (remoteEntry.comments || []).forEach(c => commentsMap.set(c.id, c));
-        (localEntry.comments || []).forEach(c => commentsMap.set(c.id, c));
-        mergedEntry.comments = Array.from(commentsMap.values())
-          .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
-
-        journalsMap.set(localEntry.id, mergedEntry);
+        journalsMap.set(localEntry.id, mergeJournalEntry(remoteEntry, localEntry));
       }
     });
     
@@ -236,6 +292,23 @@ const Storage = (() => {
         if (hasMeaningfulLocalData(localData)) {
           await uploadRemoteState(localData);
         }
+        return;
+      }
+
+      if (!hasMeaningfulLocalData(localData) && hasMeaningfulLocalData(remoteData)) {
+        console.log('Local cache is empty while remote has data. Hydrating local without uploading.');
+        isSyncingFromRemote = true;
+        saveLocal(remoteData, true);
+        if (onSyncCallback) {
+          onSyncCallback();
+        }
+        isSyncingFromRemote = false;
+        return;
+      }
+
+      if (hasMeaningfulLocalData(localData) && !hasMeaningfulLocalData(remoteData)) {
+        console.warn('Remote state is empty while local has data. Restoring remote from local cache.');
+        await uploadRemoteState(localData);
         return;
       }
 
@@ -355,7 +428,10 @@ const Storage = (() => {
     if (saved) {
       try {
         const arr = JSON.parse(saved);
-        if (Array.isArray(arr)) return arr;
+        if (Array.isArray(arr)) {
+          const valid = arr.filter(author => author === '小葦' || author === '小花');
+          if (valid.length) return Array.from(new Set(valid));
+        }
       } catch (e) {
         console.error('Failed to parse active-global-authors:', e);
       }
@@ -594,4 +670,3 @@ const Storage = (() => {
     setActiveAuthors
   };
 })();
-

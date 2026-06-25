@@ -852,6 +852,10 @@ ${existingStr}
     });
 
     var activeAuthors = Storage.getActiveAuthors();
+    if (!activeAuthors.length) {
+      activeAuthors = ['小葦', '小花'];
+      Storage.setActiveAuthors(activeAuthors);
+    }
     document.querySelectorAll('.g-author-btn').forEach(function(btn) {
       btn.classList.toggle('active', activeAuthors.includes(btn.dataset.author));
     });
