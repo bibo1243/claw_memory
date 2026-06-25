@@ -598,7 +598,6 @@ const App = (() => {
         console.log('Successfully completed call using Ollama model via Tunnel');
         return JSON.parse(content);
       } catch (ollamaError) {
-        if (timeoutId) clearTimeout(timeoutId);
         console.error('Ollama request failed, falling back to Gemini:', ollamaError);
         ollamaStatus = 'disconnected';
         updateJournalAiMode();
