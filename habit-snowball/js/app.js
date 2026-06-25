@@ -23,6 +23,7 @@ const App = (() => {
   let isLoadingMoreJournalEntries = false;
   let hasDeferredSyncRender = false;
   let summaryLoadingStates = {};
+  let activeCommentEdit = null;
   let ollamaTunnelUrl = '';
   let ollamaStatus = 'testing'; // 'testing' | 'connected' | 'disconnected'
 
@@ -1068,6 +1069,36 @@ ${existingStr}
     renderAll();
   }
 
+  function getVisibleComments(comments) {
+    return (Array.isArray(comments) ? comments : []).filter(function(comment) {
+      return comment && comment.id && !comment.deletedAt;
+    });
+  }
+
+  function getActiveCommentEditForEntry(entryId, comments) {
+    if (!activeCommentEdit || activeCommentEdit.entryId !== entryId) return null;
+    var match = (Array.isArray(comments) ? comments : []).find(function(comment) {
+      return comment && comment.id === activeCommentEdit.commentId && !comment.deletedAt;
+    }) || null;
+    if (!match) {
+      activeCommentEdit = null;
+    }
+    return match;
+  }
+
+  function focusCommentEditor(entryId) {
+    var editor = document.querySelector('.add-comment-box[data-comment-entry-id="' + entryId + '"] .comment-content-input');
+    if (!editor) return;
+    editor.focus();
+    var selection = window.getSelection();
+    if (!selection) return;
+    var range = document.createRange();
+    range.selectNodeContents(editor);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
   function renderScore() {
     const scoreEl = document.getElementById('total-score');
     const oldScore = parseInt(scoreEl.textContent.replace(/,/g, ''), 10) || 0;
@@ -1383,7 +1414,7 @@ ${existingStr}
       var unreadCommentAuthors = [];
       var readCommentAuthors = [];
       var now = new Date();
-      var entryComments = Array.isArray(entry.comments) ? entry.comments : [];
+      var entryComments = getVisibleComments(entry.comments);
       
       var readCommentIds = [];
       try {
@@ -2112,7 +2143,7 @@ ${existingStr}
     var now = new Date();
     var twentyFourHoursAgo = now - 24 * 60 * 60 * 1000;
 
-    entry.comments.forEach(function(c) {
+    getVisibleComments(entry.comments).forEach(function(c) {
       var commentTime = new Date(c.createdAt);
       if (!isNaN(commentTime.getTime()) && commentTime.getTime() > twentyFourHoursAgo) {
         if (readCommentIds.indexOf(c.id) === -1) {
@@ -2126,7 +2157,7 @@ ${existingStr}
       var validCommentIds = [];
       db.journalEntries.forEach(function(e) {
         if (Array.isArray(e.comments)) {
-          e.comments.forEach(function(cm) {
+          getVisibleComments(e.comments).forEach(function(cm) {
             var cmTime = new Date(cm.createdAt);
             if (!isNaN(cmTime.getTime()) && cmTime.getTime() > twentyFourHoursAgo) {
               validCommentIds.push(cm.id);
@@ -2184,7 +2215,7 @@ ${existingStr}
       var entryAuthor = entry.author || '小葦';
       if (entryAuthor !== '小葦' && entryAuthor !== '小花') return;
 
-      var comments = Array.isArray(entry.comments) ? entry.comments : [];
+      var comments = getVisibleComments(entry.comments);
       comments.forEach(function(c) {
         if (c.author === entryAuthor) return;
 
@@ -2285,6 +2316,23 @@ ${existingStr}
     }
   }
 
+  function editComment(entryId, commentId) {
+    activeCommentEdit = {
+      entryId: entryId,
+      commentId: commentId
+    };
+    expandedJournalEntryIds.add(entryId);
+    renderJournal();
+    window.setTimeout(function() {
+      focusCommentEditor(entryId);
+    }, 60);
+  }
+
+  function cancelCommentEdit() {
+    activeCommentEdit = null;
+    renderJournal();
+  }
+
   function submitComment(entryId, triggerEl) {
     var container = triggerEl;
     while (container && !container.classList.contains('add-comment-box')) {
@@ -2334,27 +2382,43 @@ ${existingStr}
     if (!Array.isArray(originalEntry.comments)) {
       originalEntry.comments = [];
     }
-    
-    var commentId = 'comment-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-    var newComment = {
-      id: commentId,
-      author: author,
-      content: content,
-      sticker: sticker,
-      tags: tags,
-      createdAt: new Date().toISOString()
-    };
-    
-    originalEntry.comments.push(newComment);
+
+    var editingComment = activeCommentEdit && activeCommentEdit.entryId === entryId
+      ? originalEntry.comments.find(function(comment) {
+          return comment && comment.id === activeCommentEdit.commentId && !comment.deletedAt;
+        }) || null
+      : null;
+
+    var nowIso = new Date().toISOString();
+    if (editingComment) {
+      editingComment.author = author;
+      editingComment.content = content;
+      editingComment.sticker = sticker;
+      editingComment.tags = tags;
+      editingComment.updatedAt = nowIso;
+    } else {
+      var commentId = 'comment-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+      var newComment = {
+        id: commentId,
+        author: author,
+        content: content,
+        sticker: sticker,
+        tags: tags,
+        createdAt: nowIso,
+        updatedAt: nowIso
+      };
+      originalEntry.comments.push(newComment);
+    }
     
     Storage.updateJournalEntry(entryId, {
       comments: originalEntry.comments
     });
     
     expandedJournalEntryIds.add(entryId);
+    activeCommentEdit = null;
     
     renderAll();
-    Animations.toast('評論已發送', 'success');
+    Animations.toast(editingComment ? '評論已更新' : '評論已發送', 'success');
   }
 
   function deleteComment(entryId, commentId) {
@@ -2365,10 +2429,20 @@ ${existingStr}
     if (!entry) return;
     
     if (Array.isArray(entry.comments)) {
-      var updated = entry.comments.filter(function(c) { return c.id !== commentId; });
+      var updated = entry.comments.map(function(comment) {
+        if (!comment || comment.id !== commentId) return comment;
+        return {
+          ...comment,
+          deletedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+      });
       Storage.updateJournalEntry(entryId, {
         comments: updated
       });
+      if (activeCommentEdit && activeCommentEdit.entryId === entryId && activeCommentEdit.commentId === commentId) {
+        activeCommentEdit = null;
+      }
       renderAll();
       Animations.toast('評論已刪除', 'info');
     }
@@ -2400,7 +2474,7 @@ ${existingStr}
     var entry = db.journalEntries.find(function(item) { return item.id === entryId; });
     if (!entry) return;
     
-    var comments = Array.isArray(entry.comments) ? entry.comments : [];
+    var comments = getVisibleComments(entry.comments);
     if (comments.length === 0) {
       Animations.toast('尚無對話評論，無法生成總結', 'warning');
       return;
@@ -2455,9 +2529,11 @@ ${existingStr}
   }
 
   function renderCommentsSection(entry, searchQuery) {
-    var comments = Array.isArray(entry.comments) ? entry.comments : [];
+    var allComments = Array.isArray(entry.comments) ? entry.comments : [];
+    var comments = getVisibleComments(allComments);
     var aiSummary = entry.aiSummary || '';
     var summaryLoadingState = summaryLoadingStates[entry.id] || null;
+    var editingComment = getActiveCommentEditForEntry(entry.id, allComments);
     
     var STICKERS = [
       '👍', '❤️', '👏', '🎉', '💪', '🔥', '🌟', '😍', '😂', '🤔',
@@ -2482,8 +2558,12 @@ ${existingStr}
           displayCommentContent = highlightKeyword(displayCommentContent, searchQuery);
         }
 
+        var isEditingThisComment = editingComment && editingComment.id === c.id;
         return '<div class="comment-item" style="display: flex; flex-direction: column; gap: 4px; padding: 10px; border-radius: 8px; background: rgba(255,255,255,0.02); border: 1px solid var(--border-subtle); margin-bottom: 8px; position: relative;">' +
-               '<button type="button" class="comment-delete-btn" style="position: absolute; top: 6px; right: 8px; border: none; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 16px;" onclick="App.deleteComment(\'' + entry.id + '\', \'' + c.id + '\')">&times;</button>' +
+               '<div style="position: absolute; top: 6px; right: 8px; display: flex; align-items: center; gap: 6px;">' +
+                 '<button type="button" class="history-delete-btn" style="padding: 2px 8px; font-size: 10px;" onclick="App.editComment(\'' + entry.id + '\', \'' + c.id + '\')">' + (isEditingThisComment ? '編輯中' : '編輯') + '</button>' +
+                 '<button type="button" class="comment-delete-btn" style="border: none; background: transparent; color: var(--text-muted); cursor: pointer; font-size: 16px;" onclick="App.deleteComment(\'' + entry.id + '\', \'' + c.id + '\')">&times;</button>' +
+               '</div>' +
                '<div style="display: flex; align-items: center; justify-content: space-between;">' +
                  '<div style="display: flex; align-items: center; gap: 6px;">' +
                    '<span class="author-tag ' + authorClass + '" style="padding: 1px 6px; font-size: 11px;">' + authorIcon + ' ' + c.author + '</span>' +
@@ -2502,7 +2582,7 @@ ${existingStr}
     }
 
     var stickersSelectorHtml = STICKERS.map(function(s) {
-      return '<span class="sticker-select-option" style="font-size: 22px; cursor: pointer; padding: 4px; border-radius: 4px; transition: background 0.2s;" onclick="App.selectCommentSticker(this, \'' + s + '\')">' + s + '</span>';
+      return '<span class="sticker-select-option' + ((editingComment && editingComment.sticker === s) ? ' selected' : '') + '" style="font-size: 22px; cursor: pointer; padding: 4px; border-radius: 4px; transition: background 0.2s;' + ((editingComment && editingComment.sticker === s) ? ' background: rgba(168, 216, 234, 0.3);' : '') + '" onclick="App.selectCommentSticker(this, \'' + s + '\')">' + s + '</span>';
     }).join('');
 
     var aiSummarySectionHtml = '';
@@ -2540,8 +2620,13 @@ ${existingStr}
     }
 
     var currentLoginIdentity = localStorage.getItem('login-identity') || '小葦';
-    var commentAuthorSelectorWeiActive = currentLoginIdentity === '小葦' ? ' active' : '';
-    var commentAuthorSelectorFlowerActive = currentLoginIdentity === '小花' ? ' active' : '';
+    var selectedCommentAuthor = editingComment ? (editingComment.author || currentLoginIdentity) : currentLoginIdentity;
+    var commentAuthorSelectorWeiActive = selectedCommentAuthor === '小葦' ? ' active' : '';
+    var commentAuthorSelectorFlowerActive = selectedCommentAuthor === '小花' ? ' active' : '';
+    var commentEditorTitle = editingComment ? '編輯評論' : '新增評論';
+    var commentEditorHtml = editingComment ? markdownToHtml(editingComment.content || '') : '';
+    var commentPrimaryAction = editingComment ? '更新評論' : '發送';
+    var commentPlaceholder = editingComment ? '修改這則評論內容...' : '寫下評論 (支援 Markdown 快速鍵，Ctrl+Enter 發送)...';
 
     return '<div class="comments-section" style="margin-top: 20px; border-top: 1px dashed var(--border-subtle); padding-top: 16px;">' +
         '<h4 style="font-size: 14px; font-weight: 700; color: var(--text-primary); margin-bottom: 12px; display: flex; align-items: center; gap: 6px;">' +
@@ -2551,9 +2636,9 @@ ${existingStr}
           commentsListHtml +
         '</div>' +
         aiSummarySectionHtml +
-        '<div class="add-comment-box" style="margin-top: 16px; padding: 12px; border-radius: var(--radius-md); background: var(--bg-comment-box); border: 1px solid var(--border-subtle);">' +
+        '<div class="add-comment-box" data-comment-entry-id="' + entry.id + '" style="margin-top: 16px; padding: 12px; border-radius: var(--radius-md); background: var(--bg-comment-box); border: 1px solid var(--border-subtle);">' +
           '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">' +
-            '<span style="font-size: 12px; font-weight: 600; color: var(--text-secondary);">新增評論</span>' +
+            '<span style="font-size: 12px; font-weight: 600; color: var(--text-secondary);">' + commentEditorTitle + '</span>' +
             '<div class="comment-author-selector" style="display: flex; gap: 6px;">' +
               '<button type="button" class="comment-author-btn' + commentAuthorSelectorWeiActive + '" data-comment-author="小葦" style="padding: 3px 8px; font-size: 11px; border-radius: 4px; border: 1px solid var(--border-subtle); background: rgba(255,255,255,0.02); color: var(--text-secondary); cursor: pointer; transition: all 0.2s;" onclick="App.selectCommentAuthor(this)">👦🏻 小葦</button>' +
               '<button type="button" class="comment-author-btn' + commentAuthorSelectorFlowerActive + '" data-comment-author="小花" style="padding: 3px 8px; font-size: 11px; border-radius: 4px; border: 1px solid var(--border-subtle); background: rgba(255,255,255,0.02); color: var(--text-secondary); cursor: pointer; transition: all 0.2s;" onclick="App.selectCommentAuthor(this)">👩🏻 小花</button>' +
@@ -2564,11 +2649,14 @@ ${existingStr}
             '<div class="stickers-picker" style="display: flex; flex-wrap: wrap; gap: 4px; max-height: 60px; overflow-y: auto; padding: 4px; border-radius: 4px; background: var(--bg-sticker-picker);">' +
               stickersSelectorHtml +
             '</div>' +
-            '<input type="hidden" class="comment-selected-sticker" value="" />' +
+            '<input type="hidden" class="comment-selected-sticker" value="' + escapeHtml(editingComment && editingComment.sticker ? editingComment.sticker : '') + '" />' +
           '</div>' +
           '<div style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px; width: 100%;">' +
-            '<div class="comment-content-input" contenteditable="true" data-placeholder="寫下評論 (支援 Markdown 快速鍵，Ctrl+Enter 發送)..." style="width: 100%;" onkeydown="if((event.ctrlKey || event.metaKey) && event.key === \'Enter\') { event.preventDefault(); App.submitComment(\'' + entry.id + '\', this); }"></div>' +
-            '<button type="button" class="btn btn-primary" style="align-self: flex-end; padding: 0 14px; font-size: 12px; height: 34px; font-weight: 600;" onclick="App.submitComment(\'' + entry.id + '\', this)">發送</button>' +
+            '<div class="comment-content-input" contenteditable="true" data-placeholder="' + commentPlaceholder + '" style="width: 100%;" onkeydown="if((event.ctrlKey || event.metaKey) && event.key === \'Enter\') { event.preventDefault(); App.submitComment(\'' + entry.id + '\', this); }">' + commentEditorHtml + '</div>' +
+            '<div style="display: flex; justify-content: flex-end; gap: 8px;">' +
+              (editingComment ? '<button type="button" class="btn btn-secondary" style="padding: 0 14px; font-size: 12px; height: 34px; font-weight: 600;" onclick="App.cancelCommentEdit()">取消編輯</button>' : '') +
+              '<button type="button" class="btn btn-primary" style="padding: 0 14px; font-size: 12px; height: 34px; font-weight: 600;" onclick="App.submitComment(\'' + entry.id + '\', this)">' + commentPrimaryAction + '</button>' +
+            '</div>' +
           '</div>' +
         '</div>' +
       '</div>';
@@ -2971,6 +3059,8 @@ ${existingStr}
     selectCommentAuthor,
     selectCommentSticker,
     toggleQuickTag,
+    editComment,
+    cancelCommentEdit,
     submitComment,
     deleteComment,
     generateSummary,
