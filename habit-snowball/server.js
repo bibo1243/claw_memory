@@ -1,8 +1,10 @@
 const path = require("path");
 const express = require("express");
 const mysql = require("mysql2/promise");
+const compression = require("compression");
 
 const app = express();
+app.use(compression());
 const port = Number(process.env.PORT || 8080);
 const staticDir = __dirname;
 

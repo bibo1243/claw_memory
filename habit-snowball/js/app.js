@@ -814,6 +814,19 @@ ${existingStr}
     });
   }
 
+  function hideLoadingScreen() {
+    const loader = document.getElementById('app-loading-screen');
+    if (loader) {
+      loader.style.opacity = '0';
+      loader.style.visibility = 'hidden';
+      setTimeout(function() {
+        if (loader.parentNode) {
+          loader.parentNode.removeChild(loader);
+        }
+      }, 450);
+    }
+  }
+
   async function init() {
     var loginIdentity = localStorage.getItem('login-identity');
     if (!loginIdentity) {
@@ -949,6 +962,7 @@ ${existingStr}
     renderStats();
     renderWeeklyChart();
     updateGlobalAuthorBadges();
+    hideLoadingScreen();
   }
 
   function renderScore() {
