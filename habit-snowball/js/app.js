@@ -541,9 +541,9 @@ const App = (() => {
             console.log(`Connecting to local Ollama via Tunnel: ${targetOllamaUrl}, trying model: ${model}`);
             const modelController = new AbortController();
             modelTimeoutId = setTimeout(() => {
-              console.warn(`Ollama request for model ${model} timed out after 20 seconds. Aborting...`);
+              console.warn(`Ollama request for model ${model} timed out after 90 seconds. Aborting...`);
               modelController.abort();
-            }, 20000);
+            }, 90000);
 
             const res = await fetch(`${cleanUrl}/api/chat`, {
               method: 'POST',
