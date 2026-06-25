@@ -2151,3 +2151,43 @@ body.light-theme .clouds-container {
     box-shadow: 0 0 6px rgba(245, 158, 11, 0.4);
   }
 }
+
+/* ========== Global Author Badge ========== */
+.g-author-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.g-author-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  display: none; /* JS dynamically toggles flex/none */
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 5px rgba(217, 119, 6, 0.4);
+  border: 1.5px solid var(--bg-card, #111638);
+  z-index: 101;
+  pointer-events: none;
+  font-family: var(--font-body);
+}
+
+.read-comment-hint {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  color: var(--text-secondary); /* 淡淡灰色 */
+  opacity: 0.65;
+  font-weight: 500;
+  margin-left: 8px;
+  font-family: var(--font-body);
+}
+

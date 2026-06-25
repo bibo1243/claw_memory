@@ -948,6 +948,7 @@ ${existingStr}
     renderJournal();
     renderStats();
     renderWeeklyChart();
+    updateGlobalAuthorBadges();
   }
 
   function renderScore() {
@@ -1232,20 +1233,45 @@ ${existingStr}
       const cardAuthorClass = author === '小花' ? 'card-flower' : 'card-wei';
 
       // 4. Check for comments within last 24 hours
-      var newCommentAuthors = [];
+      var unreadCommentAuthors = [];
+      var readCommentAuthors = [];
       var now = new Date();
       var entryComments = Array.isArray(entry.comments) ? entry.comments : [];
+      
+      var readCommentIds = [];
+      try {
+        readCommentIds = JSON.parse(localStorage.getItem('read-comment-ids') || '[]');
+      } catch(e) {
+        readCommentIds = [];
+      }
+
       entryComments.forEach(function(c) {
         var commentTime = new Date(c.createdAt);
         if (!isNaN(commentTime.getTime()) && (now - commentTime < 24 * 60 * 60 * 1000)) {
-          if (newCommentAuthors.indexOf(c.author) === -1) {
-            newCommentAuthors.push(c.author);
+          var isRead = readCommentIds.indexOf(c.id) !== -1;
+          if (isRead) {
+            if (readCommentAuthors.indexOf(c.author) === -1) {
+              readCommentAuthors.push(c.author);
+            }
+          } else {
+            if (unreadCommentAuthors.indexOf(c.author) === -1) {
+              unreadCommentAuthors.push(c.author);
+            }
           }
         }
       });
+
+      // Filter out authors from read list who also have unread comments
+      readCommentAuthors = readCommentAuthors.filter(function(author) {
+        return unreadCommentAuthors.indexOf(author) === -1;
+      });
+
       var newCommentBadgeHtml = '';
-      if (newCommentAuthors.length > 0) {
-        newCommentBadgeHtml = `<span class="new-comment-badge">💬 ${newCommentAuthors.join('、')}新回饋！</span>`;
+      if (unreadCommentAuthors.length > 0) {
+        newCommentBadgeHtml += `<span class="new-comment-badge">💬 ${unreadCommentAuthors.join('、')}新回饋！</span>`;
+      }
+      if (readCommentAuthors.length > 0) {
+        newCommentBadgeHtml += `<span class="read-comment-hint">💬 ${readCommentAuthors.join('、')}已回饋</span>`;
       }
 
       // 5. Desktop expansion and toggle logic
@@ -1262,7 +1288,7 @@ ${existingStr}
       }
 
       return `
-        <div class="habit-card journal-entry-card ${cardAuthorClass}">
+        <div class="habit-card journal-entry-card ${cardAuthorClass}" onclick="App.handleJournalCardClick(event, '${entry.id}')">
           <div class="journal-entry-top">
             <div>
               <div class="journal-entry-day" style="display: flex; align-items: center; gap: 8px;">
@@ -1911,8 +1937,132 @@ ${existingStr}
       expandedJournalEntryIds.delete(entryId);
     } else {
       expandedJournalEntryIds.add(entryId);
+      markCommentsAsRead(entryId);
     }
     renderJournal();
+  }
+
+  function markCommentsAsRead(entryId) {
+    var db = Storage.load();
+    var entry = db.journalEntries.find(function(item) { return item.id === entryId; });
+    if (!entry || !Array.isArray(entry.comments)) return;
+    
+    var readCommentIds = [];
+    try {
+      readCommentIds = JSON.parse(localStorage.getItem('read-comment-ids') || '[]');
+    } catch(e) {
+      readCommentIds = [];
+    }
+    
+    var changed = false;
+    var now = new Date();
+    var twentyFourHoursAgo = now - 24 * 60 * 60 * 1000;
+
+    entry.comments.forEach(function(c) {
+      var commentTime = new Date(c.createdAt);
+      if (!isNaN(commentTime.getTime()) && commentTime.getTime() > twentyFourHoursAgo) {
+        if (readCommentIds.indexOf(c.id) === -1) {
+          readCommentIds.push(c.id);
+          changed = true;
+        }
+      }
+    });
+    
+    if (changed) {
+      var validCommentIds = [];
+      db.journalEntries.forEach(function(e) {
+        if (Array.isArray(e.comments)) {
+          e.comments.forEach(function(cm) {
+            var cmTime = new Date(cm.createdAt);
+            if (!isNaN(cmTime.getTime()) && cmTime.getTime() > twentyFourHoursAgo) {
+              validCommentIds.push(cm.id);
+            }
+          });
+        }
+      });
+
+      readCommentIds = readCommentIds.filter(function(id) {
+        return validCommentIds.indexOf(id) !== -1;
+      });
+
+      localStorage.setItem('read-comment-ids', JSON.stringify(readCommentIds));
+      renderAll();
+    }
+  }
+
+  function handleJournalCardClick(event, entryId) {
+    var target = event.target;
+    if (
+      target.tagName === 'BUTTON' || 
+      target.tagName === 'INPUT' || 
+      target.tagName === 'TEXTAREA' || 
+      target.closest('.journal-entry-actions') || 
+      target.closest('.journal-card-actions') || 
+      target.closest('.add-comment-box') || 
+      target.closest('.comment-item') ||
+      target.closest('.wysiwyg-toolbar') ||
+      target.closest('.sticker-select-option')
+    ) {
+      return;
+    }
+    markCommentsAsRead(entryId);
+  }
+
+  function updateGlobalAuthorBadges() {
+    var db = Storage.load();
+    var entries = db.journalEntries || [];
+    var now = new Date();
+    var twentyFourHoursAgo = now - 24 * 60 * 60 * 1000;
+    
+    var readCommentIds = [];
+    try {
+      readCommentIds = JSON.parse(localStorage.getItem('read-comment-ids') || '[]');
+    } catch(e) {
+      readCommentIds = [];
+    }
+
+    var unreadCounts = {
+      '小葦': 0,
+      '小花': 0
+    };
+
+    entries.forEach(function(entry) {
+      var entryAuthor = entry.author || '小葦';
+      if (entryAuthor !== '小葦' && entryAuthor !== '小花') return;
+
+      var comments = Array.isArray(entry.comments) ? entry.comments : [];
+      comments.forEach(function(c) {
+        if (c.author === entryAuthor) return;
+
+        var commentTime = new Date(c.createdAt);
+        if (!isNaN(commentTime.getTime()) && commentTime.getTime() > twentyFourHoursAgo) {
+          if (readCommentIds.indexOf(c.id) === -1) {
+            unreadCounts[entryAuthor]++;
+          }
+        }
+      });
+    });
+
+    var badgeWei = document.getElementById('badge-author-wei');
+    var badgeFlower = document.getElementById('badge-author-flower');
+
+    if (badgeWei) {
+      if (unreadCounts['小葦'] > 0) {
+        badgeWei.textContent = unreadCounts['小葦'];
+        badgeWei.style.display = 'flex';
+      } else {
+        badgeWei.style.display = 'none';
+      }
+    }
+
+    if (badgeFlower) {
+      if (unreadCounts['小花'] > 0) {
+        badgeFlower.textContent = unreadCounts['小花'];
+        badgeFlower.style.display = 'flex';
+      } else {
+        badgeFlower.style.display = 'none';
+      }
+    }
   }
 
   function deleteJournalEntry(entryId) {
@@ -2594,6 +2744,7 @@ ${existingStr}
     deleteRecord,
     editJournalEntry,
     toggleJournalEntry,
+    handleJournalCardClick,
     deleteJournalEntry,
     resetAllData,
     showAddHabitModal,

@@ -118,10 +118,10 @@
     })();
   </script>
   <script>
-    window.HABIT_SNOWBALL_VERSION = '20260625_1052';
+    window.HABIT_SNOWBALL_VERSION = '20260625_1705';
   </script>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>❄️</text></svg>">
-  <link rel="stylesheet" href="css/style.css?v=20260625_1052">
+  <link rel="stylesheet" href="css/style.css?v=20260625_1705">
 </head>
 <body>
   <!-- 飄浮白雲 (明亮主題) -->
@@ -156,14 +156,20 @@
         <div style="display: flex; align-items: center; gap: 8px;">
           <!-- 全域填寫人切換器 (支援多選) -->
           <div class="global-author-toggle">
-            <button type="button" class="g-author-btn active" data-author="小葦" id="btn-toggle-author-wei">
-              <span>👦🏻</span>
-              <span>小葦</span>
-            </button>
-            <button type="button" class="g-author-btn active" data-author="小花" id="btn-toggle-author-flower">
-              <span>👩🏻</span>
-              <span>小花</span>
-            </button>
+            <div class="g-author-wrapper">
+              <button type="button" class="g-author-btn active" data-author="小葦" id="btn-toggle-author-wei">
+                <span>👦🏻</span>
+                <span>小葦</span>
+              </button>
+              <span class="g-author-badge" id="badge-author-wei"></span>
+            </div>
+            <div class="g-author-wrapper">
+              <button type="button" class="g-author-btn active" data-author="小花" id="btn-toggle-author-flower">
+                <span>👩🏻</span>
+                <span>小花</span>
+              </button>
+              <span class="g-author-badge" id="badge-author-flower"></span>
+            </div>
           </div>
           <!-- 主題切換按鈕 -->
           <button type="button" class="theme-toggle-btn" id="btn-theme-toggle" title="切換主題" onclick="App.toggleTheme()">
@@ -555,11 +561,11 @@
     </div>
   </div>
 
-  <script src="js/scoring.js?v=20260625_1052"></script>
-  <script src="js/storage.js?v=20260625_1052"></script>
-  <script src="js/particles.js?v=20260625_1052"></script>
-  <script src="js/snowball.js?v=20260625_1052"></script>
-  <script src="js/animations.js?v=20260625_1052"></script>
-  <script src="js/app.js?v=20260625_1052"></script>
+  <script src="js/scoring.js?v=20260625_1705"></script>
+  <script src="js/storage.js?v=20260625_1705"></script>
+  <script src="js/particles.js?v=20260625_1705"></script>
+  <script src="js/snowball.js?v=20260625_1705"></script>
+  <script src="js/animations.js?v=20260625_1705"></script>
+  <script src="js/app.js?v=20260625_1705"></script>
 </body>
 </html>
