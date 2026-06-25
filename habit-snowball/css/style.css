@@ -41,6 +41,7 @@
   --font-body: 'Noto Sans TC', 'Inter', sans-serif;
   --bg-header-nav: rgba(10, 14, 39, 0.95);
   --bg-overlay: rgba(10, 14, 39, 0.92);
+  --journal-collapse-fade: linear-gradient(180deg, rgba(17, 22, 56, 0) 0%, rgba(17, 22, 56, 0.96) 100%);
 }
 
 *, *::before, *::after {
@@ -1193,7 +1194,7 @@ body::before {
   right: 0;
   bottom: 0;
   height: 48px;
-  background: linear-gradient(180deg, rgba(17, 22, 56, 0) 0%, rgba(17, 22, 56, 0.96) 100%);
+  background: var(--journal-collapse-fade);
   pointer-events: none;
 }
 
@@ -2042,6 +2043,7 @@ body.light-theme {
   --bg-comment-box: rgba(255, 255, 255, 0.9); /* Soft bright cards */
   --bg-sticker-picker: #f1f5f9; /* Bright and soft light grey background */
   --bg-overlay: rgba(240, 244, 248, 0.92);
+  --journal-collapse-fade: linear-gradient(180deg, rgba(255, 255, 255, 0) 0%, rgba(248, 250, 252, 0.94) 70%, rgba(241, 245, 249, 0.98) 100%);
 }
 
 /* Hide star background radial gradients in light theme */
@@ -2232,4 +2234,3 @@ body.light-theme .clouds-container {
     grid-template-columns: 1fr !important;
   }
 }
-
