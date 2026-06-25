@@ -55,8 +55,11 @@ const Storage = (() => {
     }
   }
 
-  function saveLocal(data) {
+  function saveLocal(data, keepTimestamp = false) {
     try {
+      if (!keepTimestamp) {
+        data.lastModified = new Date().toISOString();
+      }
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch (e) {
       console.error('Failed to save local data:', e);
@@ -150,24 +153,36 @@ const Storage = (() => {
         return;
       }
 
-      const isDifferent =
-        JSON.stringify(remoteData.habits || []) !== JSON.stringify(localData.habits || []) ||
-        JSON.stringify(remoteData.records || []) !== JSON.stringify(localData.records || []) ||
-        JSON.stringify(remoteData.journalEntries || []) !== JSON.stringify(localData.journalEntries || []) ||
-        JSON.stringify(remoteData.stats || {}) !== JSON.stringify(localData.stats || {}) ||
-        JSON.stringify(remoteData.settings || {}) !== JSON.stringify(localData.settings || {});
+      const remoteTime = new Date(remoteData.lastModified || 0).getTime();
+      const localTime = new Date(localData.lastModified || 0).getTime();
 
-      if (isDifferent) {
+      if (localTime > remoteTime) {
+        console.log('Local data is newer than remote. Uploading local state.');
+        await uploadRemoteState(localData);
+      } else if (remoteTime > localTime) {
+        console.log('Remote data is newer than local. Hydrating local state.');
         if (pendingSyncTimeout) {
           clearTimeout(pendingSyncTimeout);
           pendingSyncTimeout = null;
         }
         isSyncingFromRemote = true;
-        saveLocal(remoteData);
+        saveLocal(remoteData, true);
         if (onSyncCallback) {
           onSyncCallback();
         }
         isSyncingFromRemote = false;
+      } else {
+        const isDifferent =
+          JSON.stringify(remoteData.habits || []) !== JSON.stringify(localData.habits || []) ||
+          JSON.stringify(remoteData.records || []) !== JSON.stringify(localData.records || []) ||
+          JSON.stringify(remoteData.journalEntries || []) !== JSON.stringify(localData.journalEntries || []) ||
+          JSON.stringify(remoteData.stats || {}) !== JSON.stringify(localData.stats || {}) ||
+          JSON.stringify(remoteData.settings || {}) !== JSON.stringify(localData.settings || {});
+
+        if (isDifferent) {
+          console.log('Timestamp matches but content differs. Defaulting to local state upload to enforce consistency.');
+          await uploadRemoteState(localData);
+        }
       }
     } catch (err) {
       console.error('MySQL synchronization error:', err);
