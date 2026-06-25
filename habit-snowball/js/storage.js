@@ -137,6 +137,92 @@ const Storage = (() => {
     }, 300);
   }
 
+  function mergeStates(local, remote) {
+    if (!local) return remote || getDefaultData();
+    if (!remote) return local || getDefaultData();
+
+    const habitsMap = new Map();
+    (remote.habits || []).forEach(h => habitsMap.set(h.id, h));
+    (local.habits || []).forEach(h => {
+      habitsMap.set(h.id, h);
+    });
+    const mergedHabits = Array.from(habitsMap.values());
+
+    const recordsMap = new Map();
+    (remote.records || []).forEach(r => recordsMap.set(r.id, r));
+    (local.records || []).forEach(r => recordsMap.set(r.id, r));
+    const mergedRecords = Array.from(recordsMap.values())
+      .sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0));
+
+    const journalsMap = new Map();
+    (remote.journalEntries || []).forEach(j => {
+      journalsMap.set(j.id, JSON.parse(JSON.stringify(j)));
+    });
+
+    (local.journalEntries || []).forEach(localEntry => {
+      const remoteEntry = journalsMap.get(localEntry.id);
+      if (!remoteEntry) {
+        journalsMap.set(localEntry.id, JSON.parse(JSON.stringify(localEntry)));
+      } else {
+        const mergedEntry = { ...remoteEntry };
+
+        if (localEntry.polishedContent && !remoteEntry.polishedContent) {
+          mergedEntry.polishedContent = localEntry.polishedContent;
+        }
+        if (localEntry.aiSummary && !remoteEntry.aiSummary) {
+          mergedEntry.aiSummary = localEntry.aiSummary;
+        }
+        if (localEntry.content && (!remoteEntry.content || localEntry.content.length > remoteEntry.content.length)) {
+          mergedEntry.content = localEntry.content;
+          mergedEntry.title = localEntry.title || mergedEntry.title;
+        }
+
+        const commentsMap = new Map();
+        (remoteEntry.comments || []).forEach(c => commentsMap.set(c.id, c));
+        (localEntry.comments || []).forEach(c => commentsMap.set(c.id, c));
+        mergedEntry.comments = Array.from(commentsMap.values())
+          .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+
+        journalsMap.set(localEntry.id, mergedEntry);
+      }
+    });
+    
+    const mergedJournals = Array.from(journalsMap.values())
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+
+    const totalPoints = mergedRecords.reduce((sum, r) => sum + (r.points || 0), 0);
+    const totalResisted = mergedRecords.filter(r => r.action === 'resisted').length;
+    
+    const mergedStats = {
+      ...getDefaultData().stats,
+      ...(remote.stats || {}),
+      ...(local.stats || {}),
+      totalPoints: totalPoints,
+      totalResisted: totalResisted
+    };
+
+    const mergedSettings = {
+      ...getDefaultData().settings,
+      ...(remote.settings || {}),
+      ...(local.settings || {})
+    };
+
+    const remoteTime = new Date(remote.lastModified || 0).getTime();
+    const localTime = new Date(local.lastModified || 0).getTime();
+    const lastModified = localTime > remoteTime 
+      ? (local.lastModified || new Date().toISOString())
+      : (remote.lastModified || new Date().toISOString());
+
+    return {
+      habits: mergedHabits,
+      records: mergedRecords,
+      journalEntries: mergedJournals,
+      stats: mergedStats,
+      settings: mergedSettings,
+      lastModified: lastModified
+    };
+  }
+
   async function hydrateFromRemote() {
     try {
       if (pendingSyncTimeout || pendingSyncPromise) {
@@ -156,21 +242,35 @@ const Storage = (() => {
       const remoteTime = new Date(remoteData.lastModified || 0).getTime();
       const localTime = new Date(localData.lastModified || 0).getTime();
 
-      if (localTime > remoteTime) {
-        console.log('Local data is newer than remote. Uploading local state.');
-        await uploadRemoteState(localData);
-      } else if (remoteTime > localTime) {
-        console.log('Remote data is newer than local. Hydrating local state.');
-        if (pendingSyncTimeout) {
-          clearTimeout(pendingSyncTimeout);
-          pendingSyncTimeout = null;
+      if (localTime !== remoteTime) {
+        console.log('Syncing: local timestamp is ' + localTime + ', remote is ' + remoteTime + '. Performing无损合并 (Merge)...');
+        const mergedData = mergeStates(localData, remoteData);
+        
+        const localStr = JSON.stringify(localData);
+        const remoteStr = JSON.stringify(remoteData);
+        const mergedStr = JSON.stringify(mergedData);
+
+        const localChanged = mergedStr !== localStr;
+        const remoteChanged = mergedStr !== remoteStr;
+
+        if (localChanged) {
+          console.log('Updating local storage with merged state.');
+          if (pendingSyncTimeout) {
+            clearTimeout(pendingSyncTimeout);
+            pendingSyncTimeout = null;
+          }
+          isSyncingFromRemote = true;
+          saveLocal(mergedData, true);
+          if (onSyncCallback) {
+            onSyncCallback();
+          }
+          isSyncingFromRemote = false;
         }
-        isSyncingFromRemote = true;
-        saveLocal(remoteData, true);
-        if (onSyncCallback) {
-          onSyncCallback();
+
+        if (remoteChanged) {
+          console.log('Uploading merged state to remote server.');
+          await uploadRemoteState(mergedData);
         }
-        isSyncingFromRemote = false;
       } else {
         const isDifferent =
           JSON.stringify(remoteData.habits || []) !== JSON.stringify(localData.habits || []) ||
@@ -180,8 +280,10 @@ const Storage = (() => {
           JSON.stringify(remoteData.settings || {}) !== JSON.stringify(localData.settings || {});
 
         if (isDifferent) {
-          console.log('Timestamp matches but content differs. Defaulting to local state upload to enforce consistency.');
-          await uploadRemoteState(localData);
+          console.log('Timestamp matches but content differs. Merging states to resolve inconsistency.');
+          const mergedData = mergeStates(localData, remoteData);
+          saveLocal(mergedData, true);
+          await uploadRemoteState(mergedData);
         }
       }
     } catch (err) {
