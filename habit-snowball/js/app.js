@@ -21,6 +21,7 @@ const App = (() => {
   let journalVisibleCount = 3;
   const journalBatchSize = 3;
   let isLoadingMoreJournalEntries = false;
+  let hasDeferredSyncRender = false;
   let ollamaTunnelUrl = '';
   let ollamaStatus = 'testing'; // 'testing' | 'connected' | 'disconnected'
 
@@ -890,7 +891,7 @@ ${existingStr}
     renderAll();
     bindEvents();
 
-    Storage.setSyncCallback(renderAll);
+    Storage.setSyncCallback(renderAllUnlessTyping);
     Storage.startSync();
 
     var syncUserInput = document.getElementById('sync-user-input');
@@ -971,6 +972,32 @@ ${existingStr}
     renderWeeklyChart();
     updateGlobalAuthorBadges();
     hideLoadingScreen();
+  }
+
+  function isTypingInEditor() {
+    var activeEl = document.activeElement;
+    if (!activeEl) return false;
+    return activeEl.classList.contains('comment-content-input') ||
+      activeEl.id === 'journal-input' ||
+      activeEl.id === 'note-input' ||
+      activeEl.tagName === 'INPUT' ||
+      activeEl.tagName === 'TEXTAREA' ||
+      activeEl.isContentEditable;
+  }
+
+  function renderAllUnlessTyping() {
+    if (isTypingInEditor()) {
+      hasDeferredSyncRender = true;
+      return;
+    }
+    hasDeferredSyncRender = false;
+    renderAll();
+  }
+
+  function flushDeferredSyncRender() {
+    if (!hasDeferredSyncRender || isTypingInEditor()) return;
+    hasDeferredSyncRender = false;
+    renderAll();
   }
 
   function renderScore() {
@@ -2802,6 +2829,10 @@ ${existingStr}
     addEvent('journal-input', 'input', autoFormatJournalOutline);
 
     setupWysiwygEditor(document.getElementById('journal-input'));
+
+    document.addEventListener('focusout', function() {
+      window.setTimeout(flushDeferredSyncRender, 0);
+    });
 
     window.addEventListener('resize', () => {
       SnowballVis.resize();
