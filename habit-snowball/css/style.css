@@ -1218,6 +1218,24 @@ body::before {
   padding-left: 20px;
 }
 
+.ai-summary-body p {
+  margin: 0 0 8px;
+}
+
+.ai-summary-body p:last-child {
+  margin-bottom: 0;
+}
+
+.ai-summary-body ol,
+.ai-summary-body ul {
+  margin: 8px 0 0;
+  padding-left: 22px;
+}
+
+.ai-summary-body li + li {
+  margin-top: 6px;
+}
+
 .chart-container {
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);

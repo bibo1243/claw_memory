@@ -114,6 +114,23 @@ const App = (() => {
     return result.join('');
   }
 
+  function formatAiSummaryHtml(summary) {
+    var normalized = normalizeEditorText(summary || '');
+    if (!normalized) return '';
+
+    normalized = normalized
+      .replace(/([：:])\s*(?=\d+\.\s*)/g, '$1\n')
+      .replace(/\s*[；;]\s*(?=\d+\.\s*)/g, '\n')
+      .replace(/\s*[，,]\s*(?=\d+\.\s*)/g, '\n')
+      .replace(/\s+(?=\d+\.\s*)/g, '\n');
+
+    if (/\d+\.\s*/.test(normalized)) {
+      return markdownToHtml(normalized);
+    }
+
+    return markdownToHtml(normalized);
+  }
+
   function escapeHtml(text) {
     return (text || '')
       .replace(/&/g, '&amp;')
@@ -2419,7 +2436,7 @@ ${existingStr}
               '<strong style="font-size: 14px; color: var(--accent-1);">AI 對話總結</strong>' +
               '<button type="button" class="history-delete-btn" style="margin-left: auto; padding: 2px 8px; font-size: 10px;" onclick="App.regenerateSummary(\'' + entry.id + '\')">重新總結</button>' +
             '</div>' +
-            '<p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6; white-space: pre-wrap;">' + escapeHtml(aiSummary) + '</p>' +
+            '<div class="ai-summary-body" style="font-size: 13px; color: var(--text-secondary); line-height: 1.75;">' + formatAiSummaryHtml(aiSummary) + '</div>' +
           '</div>';
       } else {
         aiSummarySectionHtml = '<div style="margin-top: 16px; text-align: center;">' +
