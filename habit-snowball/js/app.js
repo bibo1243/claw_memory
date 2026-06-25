@@ -18,8 +18,9 @@ const App = (() => {
   let isRunningJournalAi = false;
   let editingRecordId = null;
   let isJournalDatePickerOpen = false;
-  let journalCurrentPage = 1;
-  const journalPageSize = 5;
+  let journalVisibleCount = 3;
+  const journalBatchSize = 3;
+  let isLoadingMoreJournalEntries = false;
   let ollamaTunnelUrl = '';
   let ollamaStatus = 'testing'; // 'testing' | 'connected' | 'disconnected'
 
@@ -913,6 +914,7 @@ ${existingStr}
   function selectLoginIdentity(author) {
     localStorage.setItem('login-identity', author);
     localStorage.setItem('last-selected-author', author);
+    resetJournalVisibleCount();
     var overlay = document.getElementById('identity-picker-overlay');
     if (overlay) {
       overlay.style.display = 'none';
@@ -1169,11 +1171,46 @@ ${existingStr}
     return dayMap;
   }
 
+  function resetJournalVisibleCount() {
+    journalVisibleCount = journalBatchSize;
+    isLoadingMoreJournalEntries = false;
+  }
+
+  function loadMoreJournalEntries() {
+    if (isLoadingMoreJournalEntries) return;
+
+    var marker = document.getElementById('journal-load-more-marker');
+    if (!marker || marker.getAttribute('data-has-more') !== 'true') return;
+
+    isLoadingMoreJournalEntries = true;
+    renderJournal();
+
+    window.setTimeout(function() {
+      journalVisibleCount += journalBatchSize;
+      isLoadingMoreJournalEntries = false;
+      renderJournal();
+    }, 220);
+  }
+
+  function handleJournalInfiniteScroll() {
+    var journalView = document.getElementById('view-journal');
+    if (!journalView || !journalView.classList.contains('active')) return;
+
+    var marker = document.getElementById('journal-load-more-marker');
+    if (!marker || marker.getAttribute('data-has-more') !== 'true') return;
+
+    var viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+    var rect = marker.getBoundingClientRect();
+    if (rect.top <= viewportHeight + 180) {
+      loadMoreJournalEntries();
+    }
+  }
+
   function renderJournal() {
     const currentDateEl = document.getElementById('journal-current-date');
     const currentDayEl = document.getElementById('journal-current-day');
     const listEl = document.getElementById('journal-list');
-    const paginationEl = document.getElementById('journal-pagination');
+    const loadMoreEl = document.getElementById('journal-pagination');
     if (!currentDateEl || !currentDayEl || !listEl) return;
 
     const entries = Storage.getJournalEntries();
@@ -1199,7 +1236,7 @@ ${existingStr}
           <p>從第 1 天開始，留下今天的精進紀錄。</p>
         </div>
       `;
-      if (paginationEl) paginationEl.innerHTML = '';
+      if (loadMoreEl) loadMoreEl.innerHTML = '';
       return;
     }
 
@@ -1224,24 +1261,19 @@ ${existingStr}
           <p>找不到符合「${escapeHtml(query)}」的日記紀錄。</p>
         </div>
       `;
-      if (paginationEl) paginationEl.innerHTML = '';
+      if (loadMoreEl) loadMoreEl.innerHTML = '';
       return;
     }
 
-    // 2. Pagination calculation
-    const totalPages = Math.ceil(filteredEntries.length / journalPageSize);
-    if (journalCurrentPage > totalPages) {
-      journalCurrentPage = totalPages || 1;
+    // 2. Incremental list calculation
+    if (journalVisibleCount < journalBatchSize) {
+      journalVisibleCount = journalBatchSize;
     }
-    if (journalCurrentPage < 1) {
-      journalCurrentPage = 1;
-    }
+    const visibleLimit = Math.min(journalVisibleCount, filteredEntries.length);
+    const pageEntries = filteredEntries.slice(0, visibleLimit);
+    const hasMoreEntries = visibleLimit < filteredEntries.length;
 
-    const startIndex = (journalCurrentPage - 1) * journalPageSize;
-    const endIndex = startIndex + journalPageSize;
-    const pageEntries = filteredEntries.slice(startIndex, endIndex);
-
-    // 3. Render page items
+    // 3. Render visible items
     listEl.innerHTML = pageEntries.map(entry => {
       const dayNumber = dayMap.get(entry.id) || 1;
       const keywords = Array.isArray(entry.keywords) ? entry.keywords : [];
@@ -1350,18 +1382,25 @@ ${existingStr}
       `;
     }).join('');
 
-    // 7. Render pagination controls
-    if (paginationEl) {
-      if (totalPages <= 1) {
-        paginationEl.innerHTML = '';
+    // 7. Render infinite-load status
+    if (loadMoreEl) {
+      if (hasMoreEntries || isLoadingMoreJournalEntries) {
+        var loadMoreText = isLoadingMoreJournalEntries
+          ? '載入更多日精進...'
+          : `往下滑載入更多，已顯示 ${visibleLimit} / ${filteredEntries.length} 則`;
+        var loadMoreClass = isLoadingMoreJournalEntries
+          ? 'journal-load-more-marker is-loading'
+          : 'journal-load-more-marker';
+        loadMoreEl.innerHTML = `
+          <div id="journal-load-more-marker" class="${loadMoreClass}" data-has-more="${hasMoreEntries ? 'true' : 'false'}">
+            <span class="journal-load-more-snowflake">❄</span>
+            <span>${loadMoreText}</span>
+          </div>
+        `;
       } else {
-        var paginationHtml = '';
-        paginationHtml += `<button class="pagination-btn" ${journalCurrentPage === 1 ? 'disabled' : ''} onclick="App.setJournalPage(${journalCurrentPage - 1})">上一頁</button>`;
-        for (var p = 1; p <= totalPages; p++) {
-          paginationHtml += `<button class="pagination-btn ${p === journalCurrentPage ? 'active' : ''}" onclick="App.setJournalPage(${p})">${p}</button>`;
-        }
-        paginationHtml += `<button class="pagination-btn" ${journalCurrentPage === totalPages ? 'disabled' : ''} onclick="App.setJournalPage(${journalCurrentPage + 1})">下一頁</button>`;
-        paginationEl.innerHTML = paginationHtml;
+        loadMoreEl.innerHTML = filteredEntries.length > journalBatchSize
+          ? `<div id="journal-load-more-marker" class="journal-load-more-marker is-complete" data-has-more="false">已載入全部 ${filteredEntries.length} 則</div>`
+          : '';
       }
     }
 
@@ -1371,8 +1410,8 @@ ${existingStr}
     });
   }
 
-  function setJournalPage(page) {
-    journalCurrentPage = page;
+  function setJournalPage() {
+    resetJournalVisibleCount();
     renderJournal();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -2433,6 +2472,7 @@ ${existingStr}
       b.classList.toggle('active', active.includes(b.dataset.author));
     });
 
+    resetJournalVisibleCount();
     renderAll();
   }
 
@@ -2681,6 +2721,7 @@ ${existingStr}
       document.querySelectorAll('.author-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.author === authorName);
       });
+      resetJournalVisibleCount();
       renderAll();
     }
 
@@ -2698,7 +2739,7 @@ ${existingStr}
     const searchSuggestions = document.getElementById('search-keyword-suggestions');
     if (mainSearchInput) {
       mainSearchInput.addEventListener('input', (e) => {
-        journalCurrentPage = 1;
+        resetJournalVisibleCount();
         renderJournal();
 
         const val = e.target.value.trim().toLowerCase();
@@ -2766,6 +2807,7 @@ ${existingStr}
       SnowballVis.resize();
       renderWeeklyChart();
     });
+    window.addEventListener('scroll', handleJournalInfiniteScroll, false);
   }
 
   return {
