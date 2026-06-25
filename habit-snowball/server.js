@@ -158,6 +158,49 @@ function preferRicherText(a, b) {
   return aa.length >= bb.length ? aa : bb;
 }
 
+function getTimestampValue(value) {
+  const time = new Date(value || 0).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function mergeAiSummary(primaryEntry, secondaryEntry, preferredSource) {
+  const primarySummary = typeof primaryEntry.aiSummary === "string" ? primaryEntry.aiSummary : "";
+  const secondarySummary = typeof secondaryEntry.aiSummary === "string" ? secondaryEntry.aiSummary : "";
+  const primaryUpdatedAt = primaryEntry.aiSummaryUpdatedAt || "";
+  const secondaryUpdatedAt = secondaryEntry.aiSummaryUpdatedAt || "";
+  const primaryUpdatedTime = getTimestampValue(primaryUpdatedAt);
+  const secondaryUpdatedTime = getTimestampValue(secondaryUpdatedAt);
+
+  if (primarySummary && secondarySummary) {
+    if (primaryUpdatedTime !== secondaryUpdatedTime) {
+      return primaryUpdatedTime > secondaryUpdatedTime
+        ? { summary: primarySummary, updatedAt: primaryUpdatedAt || secondaryUpdatedAt }
+        : { summary: secondarySummary, updatedAt: secondaryUpdatedAt || primaryUpdatedAt };
+    }
+
+    if (preferredSource === "primary") {
+      return { summary: primarySummary, updatedAt: primaryUpdatedAt || secondaryUpdatedAt };
+    }
+    if (preferredSource === "secondary") {
+      return { summary: secondarySummary, updatedAt: secondaryUpdatedAt || primaryUpdatedAt };
+    }
+
+    const richerSummary = preferRicherText(primarySummary, secondarySummary);
+    return richerSummary === primarySummary
+      ? { summary: primarySummary, updatedAt: primaryUpdatedAt || secondaryUpdatedAt }
+      : { summary: secondarySummary, updatedAt: secondaryUpdatedAt || primaryUpdatedAt };
+  }
+
+  if (secondarySummary) {
+    return { summary: secondarySummary, updatedAt: secondaryUpdatedAt };
+  }
+  if (primarySummary) {
+    return { summary: primarySummary, updatedAt: primaryUpdatedAt };
+  }
+
+  return { summary: "", updatedAt: secondaryUpdatedAt || primaryUpdatedAt || "" };
+}
+
 function mergeStringArrays(a, b) {
   const out = [];
   [...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])].forEach((item) => {
@@ -190,7 +233,13 @@ function mergeJournalEntry(existingEntry, incomingEntry) {
     : (incomingEntry.title || existingEntry.title || "");
   base.content = preferRicherText(existingEntry.content, incomingEntry.content);
   base.polishedContent = preferRicherText(existingEntry.polishedContent, incomingEntry.polishedContent);
-  base.aiSummary = preferRicherText(existingEntry.aiSummary, incomingEntry.aiSummary);
+  const summaryMeta = mergeAiSummary(existingEntry, incomingEntry, "secondary");
+  base.aiSummary = summaryMeta.summary;
+  if (summaryMeta.updatedAt) {
+    base.aiSummaryUpdatedAt = summaryMeta.updatedAt;
+  } else {
+    delete base.aiSummaryUpdatedAt;
+  }
   base.keywords = mergeStringArrays(existingEntry.keywords, incomingEntry.keywords);
 
   const commentsMap = new Map();

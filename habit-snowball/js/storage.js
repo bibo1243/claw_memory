@@ -156,6 +156,49 @@ const Storage = (() => {
     return aa.length >= bb.length ? aa : bb;
   }
 
+  function getTimestampValue(value) {
+    const time = new Date(value || 0).getTime();
+    return Number.isFinite(time) ? time : 0;
+  }
+
+  function mergeAiSummary(primaryEntry, secondaryEntry, preferredSource) {
+    const primarySummary = typeof primaryEntry.aiSummary === 'string' ? primaryEntry.aiSummary : '';
+    const secondarySummary = typeof secondaryEntry.aiSummary === 'string' ? secondaryEntry.aiSummary : '';
+    const primaryUpdatedAt = primaryEntry.aiSummaryUpdatedAt || '';
+    const secondaryUpdatedAt = secondaryEntry.aiSummaryUpdatedAt || '';
+    const primaryUpdatedTime = getTimestampValue(primaryUpdatedAt);
+    const secondaryUpdatedTime = getTimestampValue(secondaryUpdatedAt);
+
+    if (primarySummary && secondarySummary) {
+      if (primaryUpdatedTime !== secondaryUpdatedTime) {
+        return primaryUpdatedTime > secondaryUpdatedTime
+          ? { summary: primarySummary, updatedAt: primaryUpdatedAt || secondaryUpdatedAt }
+          : { summary: secondarySummary, updatedAt: secondaryUpdatedAt || primaryUpdatedAt };
+      }
+
+      if (preferredSource === 'primary') {
+        return { summary: primarySummary, updatedAt: primaryUpdatedAt || secondaryUpdatedAt };
+      }
+      if (preferredSource === 'secondary') {
+        return { summary: secondarySummary, updatedAt: secondaryUpdatedAt || primaryUpdatedAt };
+      }
+
+      const richerSummary = preferRicherText(primarySummary, secondarySummary);
+      return richerSummary === primarySummary
+        ? { summary: primarySummary, updatedAt: primaryUpdatedAt || secondaryUpdatedAt }
+        : { summary: secondarySummary, updatedAt: secondaryUpdatedAt || primaryUpdatedAt };
+    }
+
+    if (secondarySummary) {
+      return { summary: secondarySummary, updatedAt: secondaryUpdatedAt };
+    }
+    if (primarySummary) {
+      return { summary: primarySummary, updatedAt: primaryUpdatedAt };
+    }
+
+    return { summary: '', updatedAt: secondaryUpdatedAt || primaryUpdatedAt || '' };
+  }
+
   function mergeStringArrays(a, b) {
     const out = [];
     (Array.isArray(a) ? a : []).concat(Array.isArray(b) ? b : []).forEach(item => {
@@ -175,7 +218,7 @@ const Storage = (() => {
       (Array.isArray(entry.keywords) ? entry.keywords.length * 50 : 0);
   }
 
-  function mergeJournalEntry(remoteEntry, localEntry) {
+  function mergeJournalEntry(remoteEntry, localEntry, preferredSummarySource = 'richer') {
     const remoteScore = journalCompletenessScore(remoteEntry);
     const localScore = journalCompletenessScore(localEntry);
     const base = cloneValue(remoteScore >= localScore ? remoteEntry : localEntry);
@@ -188,7 +231,17 @@ const Storage = (() => {
       : (localEntry.title || remoteEntry.title || '');
     base.content = preferRicherText(remoteEntry.content, localEntry.content);
     base.polishedContent = preferRicherText(remoteEntry.polishedContent, localEntry.polishedContent);
-    base.aiSummary = preferRicherText(remoteEntry.aiSummary, localEntry.aiSummary);
+    const summaryMeta = mergeAiSummary(
+      remoteEntry,
+      localEntry,
+      preferredSummarySource === 'remote' ? 'primary' : preferredSummarySource === 'local' ? 'secondary' : 'richer'
+    );
+    base.aiSummary = summaryMeta.summary;
+    if (summaryMeta.updatedAt) {
+      base.aiSummaryUpdatedAt = summaryMeta.updatedAt;
+    } else {
+      delete base.aiSummaryUpdatedAt;
+    }
     base.keywords = mergeStringArrays(remoteEntry.keywords, localEntry.keywords);
 
     const commentsMap = new Map();
@@ -216,6 +269,14 @@ const Storage = (() => {
       return cloneValue(local);
     }
 
+    const remoteTime = new Date(remote.lastModified || 0).getTime();
+    const localTime = new Date(local.lastModified || 0).getTime();
+    const preferredSummarySource = localTime > remoteTime
+      ? 'local'
+      : remoteTime > localTime
+        ? 'remote'
+        : 'richer';
+
     const habitsMap = new Map();
     (remote.habits || []).forEach(h => habitsMap.set(h.id, cloneValue(h)));
     (local.habits || []).forEach(h => {
@@ -239,7 +300,7 @@ const Storage = (() => {
       if (!remoteEntry) {
         journalsMap.set(localEntry.id, cloneValue(localEntry));
       } else {
-        journalsMap.set(localEntry.id, mergeJournalEntry(remoteEntry, localEntry));
+        journalsMap.set(localEntry.id, mergeJournalEntry(remoteEntry, localEntry, preferredSummarySource));
       }
     });
     
@@ -263,8 +324,6 @@ const Storage = (() => {
       ...(local.settings || {})
     };
 
-    const remoteTime = new Date(remote.lastModified || 0).getTime();
-    const localTime = new Date(local.lastModified || 0).getTime();
     const lastModified = localTime > remoteTime 
       ? (local.lastModified || new Date().toISOString())
       : (remote.lastModified || new Date().toISOString());
@@ -617,10 +676,16 @@ const Storage = (() => {
     const data = load();
     const index = data.journalEntries.findIndex(entry => entry.id === entryId);
     if (index === -1) return null;
+    const normalizedUpdates = {
+      ...updates
+    };
+    if (Object.prototype.hasOwnProperty.call(normalizedUpdates, 'aiSummary') && !normalizedUpdates.aiSummaryUpdatedAt) {
+      normalizedUpdates.aiSummaryUpdatedAt = new Date().toISOString();
+    }
     const activeAuthor = updates.author || data.journalEntries[index].author || localStorage.getItem('last-selected-author') || '小葦';
     data.journalEntries[index] = {
       ...data.journalEntries[index],
-      ...updates,
+      ...normalizedUpdates,
       author: activeAuthor,
       id: data.journalEntries[index].id
     };
