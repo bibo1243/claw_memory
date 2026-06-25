@@ -134,6 +134,128 @@ function normalizePayload(payload) {
   };
 }
 
+function hasMeaningfulPayload(payload) {
+  if (!isPlainObject(payload)) return false;
+  const stats = isPlainObject(payload.stats) ? payload.stats : {};
+  return (Array.isArray(payload.habits) && payload.habits.length > 0) ||
+    (Array.isArray(payload.records) && payload.records.length > 0) ||
+    (Array.isArray(payload.journalEntries) && payload.journalEntries.length > 0) ||
+    (stats.totalPoints || 0) !== 0 ||
+    (stats.totalResisted || 0) !== 0 ||
+    (stats.currentStreak || 0) !== 0 ||
+    (stats.longestStreak || 0) !== 0;
+}
+
+function cloneValue(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function preferRicherText(a, b) {
+  const aa = typeof a === "string" ? a : "";
+  const bb = typeof b === "string" ? b : "";
+  if (!aa) return bb;
+  if (!bb) return aa;
+  return aa.length >= bb.length ? aa : bb;
+}
+
+function mergeStringArrays(a, b) {
+  const out = [];
+  [...(Array.isArray(a) ? a : []), ...(Array.isArray(b) ? b : [])].forEach((item) => {
+    if (typeof item === "string" && item.trim() && !out.includes(item.trim())) {
+      out.push(item.trim());
+    }
+  });
+  return out;
+}
+
+function journalCompletenessScore(entry) {
+  if (!isPlainObject(entry)) return 0;
+  return (entry.content ? entry.content.length : 0) +
+    (entry.polishedContent ? entry.polishedContent.length : 0) +
+    (entry.aiSummary ? entry.aiSummary.length : 0) +
+    (Array.isArray(entry.comments) ? entry.comments.length * 1000 : 0) +
+    (Array.isArray(entry.keywords) ? entry.keywords.length * 50 : 0);
+}
+
+function mergeJournalEntry(existingEntry, incomingEntry) {
+  const existingScore = journalCompletenessScore(existingEntry);
+  const incomingScore = journalCompletenessScore(incomingEntry);
+  const base = cloneValue(existingScore >= incomingScore ? existingEntry : incomingEntry);
+
+  base.id = existingEntry.id || incomingEntry.id;
+  base.author = existingEntry.author || incomingEntry.author || "小葦";
+  base.createdAt = existingEntry.createdAt || incomingEntry.createdAt || new Date().toISOString();
+  base.title = existingScore >= incomingScore
+    ? (existingEntry.title || incomingEntry.title || "")
+    : (incomingEntry.title || existingEntry.title || "");
+  base.content = preferRicherText(existingEntry.content, incomingEntry.content);
+  base.polishedContent = preferRicherText(existingEntry.polishedContent, incomingEntry.polishedContent);
+  base.aiSummary = preferRicherText(existingEntry.aiSummary, incomingEntry.aiSummary);
+  base.keywords = mergeStringArrays(existingEntry.keywords, incomingEntry.keywords);
+
+  const commentsMap = new Map();
+  [...(Array.isArray(existingEntry.comments) ? existingEntry.comments : []), ...(Array.isArray(incomingEntry.comments) ? incomingEntry.comments : [])].forEach((comment) => {
+    if (!comment || !comment.id) return;
+    commentsMap.set(comment.id, {
+      ...(commentsMap.get(comment.id) || {}),
+      ...cloneValue(comment)
+    });
+  });
+  base.comments = Array.from(commentsMap.values())
+    .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+
+  return base;
+}
+
+function mergeById(existingItems, incomingItems, mergeItem) {
+  const map = new Map();
+  (Array.isArray(existingItems) ? existingItems : []).forEach((item) => {
+    if (item && item.id) map.set(item.id, cloneValue(item));
+  });
+  (Array.isArray(incomingItems) ? incomingItems : []).forEach((item) => {
+    if (!item || !item.id) return;
+    if (map.has(item.id)) {
+      map.set(item.id, mergeItem ? mergeItem(map.get(item.id), item) : { ...map.get(item.id), ...cloneValue(item) });
+    } else {
+      map.set(item.id, cloneValue(item));
+    }
+  });
+  return Array.from(map.values());
+}
+
+function mergePayloads(existingPayload, incomingPayload) {
+  const existing = normalizePayload(existingPayload);
+  const incoming = normalizePayload(incomingPayload);
+  if (!hasMeaningfulPayload(incoming) && hasMeaningfulPayload(existing)) {
+    return existing;
+  }
+  if (!hasMeaningfulPayload(existing)) {
+    return incoming;
+  }
+
+  const records = mergeById(existing.records, incoming.records)
+    .sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0));
+  return {
+    ...existing,
+    ...incoming,
+    habits: mergeById(existing.habits, incoming.habits),
+    records,
+    journalEntries: mergeById(existing.journalEntries, incoming.journalEntries, mergeJournalEntry)
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)),
+    stats: {
+      ...existing.stats,
+      ...incoming.stats,
+      totalPoints: records.reduce((sum, record) => sum + (record.points || 0), 0),
+      totalResisted: records.filter((record) => record.action === "resisted").length
+    },
+    settings: {
+      ...existing.settings,
+      ...incoming.settings
+    },
+    lastModified: new Date().toISOString()
+  };
+}
+
 app.get("/api/health", async (_req, res) => {
   try {
     await getPool().query("SELECT 1");
@@ -171,7 +293,13 @@ app.get("/api/state/:userKey", async (req, res) => {
 app.put("/api/state/:userKey", async (req, res) => {
   try {
     const userKey = normalizeUserKey(req.params.userKey);
-    const data = normalizePayload(req.body ? req.body.data : null);
+    const incomingData = normalizePayload(req.body ? req.body.data : null);
+    const [existingRows] = await getPool().query(
+      "SELECT payload FROM user_states WHERE user_key = ? LIMIT 1",
+      [userKey]
+    );
+    const existingData = existingRows.length ? normalizePayload(existingRows[0].payload) : null;
+    const data = existingData ? mergePayloads(existingData, incomingData) : incomingData;
 
     await getPool().query(
       `INSERT INTO user_states (user_key, payload)

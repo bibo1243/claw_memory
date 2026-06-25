@@ -842,7 +842,9 @@ ${existingStr}
     var savedTheme = localStorage.getItem('theme-preference') || 'light';
     applyTheme(savedTheme);
 
-    // Load local cache immediately to prevent blank screen while fetching remote state
+    // Hydrate remote state before local mutations such as streak updates.
+    data = Storage.load();
+    await Storage.hydrateFromRemote();
     data = Storage.load();
     setSelectedJournalDate(new Date());
 
