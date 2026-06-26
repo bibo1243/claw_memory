@@ -209,6 +209,43 @@ const Storage = (() => {
     return out;
   }
 
+  function normalizeStringArray(items) {
+    const out = [];
+    (Array.isArray(items) ? items : []).forEach(item => {
+      if (typeof item === 'string' && item.trim() && !out.includes(item.trim())) {
+        out.push(item.trim());
+      }
+    });
+    return out;
+  }
+
+  function mergeKeywordField(remoteEntry, localEntry, preferredSource) {
+    const remoteHasKeywords = Array.isArray(remoteEntry.keywords);
+    const localHasKeywords = Array.isArray(localEntry.keywords);
+    if (!remoteHasKeywords && !localHasKeywords) return [];
+    if (!remoteHasKeywords) return normalizeStringArray(localEntry.keywords);
+    if (!localHasKeywords) return normalizeStringArray(remoteEntry.keywords);
+
+    const remoteTime = getTimestampValue(remoteEntry.keywordsUpdatedAt || remoteEntry.updatedAt);
+    const localTime = getTimestampValue(localEntry.keywordsUpdatedAt || localEntry.updatedAt);
+    if (localTime > remoteTime) return normalizeStringArray(localEntry.keywords);
+    if (remoteTime > localTime) return normalizeStringArray(remoteEntry.keywords);
+
+    return preferredSource === 'local'
+      ? normalizeStringArray(localEntry.keywords)
+      : normalizeStringArray(remoteEntry.keywords);
+  }
+
+  function getMergedKeywordUpdatedAt(remoteEntry, localEntry, preferredSource) {
+    const remoteUpdatedAt = remoteEntry.keywordsUpdatedAt || remoteEntry.updatedAt || '';
+    const localUpdatedAt = localEntry.keywordsUpdatedAt || localEntry.updatedAt || '';
+    const remoteTime = getTimestampValue(remoteUpdatedAt);
+    const localTime = getTimestampValue(localUpdatedAt);
+    if (localTime > remoteTime) return localUpdatedAt;
+    if (remoteTime > localTime) return remoteUpdatedAt;
+    return preferredSource === 'local' ? localUpdatedAt : remoteUpdatedAt;
+  }
+
   function journalCompletenessScore(entry) {
     if (!entry) return 0;
     return (entry.content ? entry.content.length : 0) +
@@ -242,7 +279,11 @@ const Storage = (() => {
     } else {
       delete base.aiSummaryUpdatedAt;
     }
-    base.keywords = mergeStringArrays(remoteEntry.keywords, localEntry.keywords);
+    base.keywords = mergeKeywordField(remoteEntry, localEntry, preferredSummarySource);
+    const keywordUpdatedAt = getMergedKeywordUpdatedAt(remoteEntry, localEntry, preferredSummarySource);
+    if (keywordUpdatedAt) {
+      base.keywordsUpdatedAt = keywordUpdatedAt;
+    }
 
     const commentsMap = new Map();
     (Array.isArray(remoteEntry.comments) ? remoteEntry.comments : []).forEach(c => {
@@ -661,12 +702,17 @@ const Storage = (() => {
   function addJournalEntry(entry) {
     const data = load();
     const activeAuthor = entry.author || localStorage.getItem('last-selected-author') || '小葦';
+    const now = new Date().toISOString();
     const journalEntry = {
       id: generateId(),
-      createdAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
       ...entry,
       author: activeAuthor
     };
+    if (Object.prototype.hasOwnProperty.call(journalEntry, 'keywords') && !journalEntry.keywordsUpdatedAt) {
+      journalEntry.keywordsUpdatedAt = now;
+    }
     data.journalEntries.push(journalEntry);
     save(data);
     return journalEntry;
@@ -679,8 +725,13 @@ const Storage = (() => {
     const normalizedUpdates = {
       ...updates
     };
+    const now = new Date().toISOString();
+    normalizedUpdates.updatedAt = now;
+    if (Object.prototype.hasOwnProperty.call(normalizedUpdates, 'keywords') && !normalizedUpdates.keywordsUpdatedAt) {
+      normalizedUpdates.keywordsUpdatedAt = now;
+    }
     if (Object.prototype.hasOwnProperty.call(normalizedUpdates, 'aiSummary') && !normalizedUpdates.aiSummaryUpdatedAt) {
-      normalizedUpdates.aiSummaryUpdatedAt = new Date().toISOString();
+      normalizedUpdates.aiSummaryUpdatedAt = now;
     }
     const activeAuthor = updates.author || data.journalEntries[index].author || localStorage.getItem('last-selected-author') || '小葦';
     data.journalEntries[index] = {

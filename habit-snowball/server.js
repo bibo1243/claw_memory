@@ -211,6 +211,30 @@ function mergeStringArrays(a, b) {
   return out;
 }
 
+function normalizeStringArray(items) {
+  const out = [];
+  (Array.isArray(items) ? items : []).forEach((item) => {
+    if (typeof item === "string" && item.trim() && !out.includes(item.trim())) {
+      out.push(item.trim());
+    }
+  });
+  return out;
+}
+
+function mergeKeywordField(existingEntry, incomingEntry, existingPayloadUpdatedAt, incomingPayloadUpdatedAt) {
+  const existingHasKeywords = Array.isArray(existingEntry.keywords);
+  const incomingHasKeywords = Array.isArray(incomingEntry.keywords);
+  if (!existingHasKeywords && !incomingHasKeywords) return [];
+  if (!existingHasKeywords) return normalizeStringArray(incomingEntry.keywords);
+  if (!incomingHasKeywords) return normalizeStringArray(existingEntry.keywords);
+
+  const existingTime = getTimestampValue(existingEntry.keywordsUpdatedAt || existingEntry.updatedAt || existingPayloadUpdatedAt);
+  const incomingTime = getTimestampValue(incomingEntry.keywordsUpdatedAt || incomingEntry.updatedAt || incomingPayloadUpdatedAt);
+  return incomingTime >= existingTime
+    ? normalizeStringArray(incomingEntry.keywords)
+    : normalizeStringArray(existingEntry.keywords);
+}
+
 function journalCompletenessScore(entry) {
   if (!isPlainObject(entry)) return 0;
   return (entry.content ? entry.content.length : 0) +
@@ -220,7 +244,7 @@ function journalCompletenessScore(entry) {
     (Array.isArray(entry.keywords) ? entry.keywords.length * 50 : 0);
 }
 
-function mergeJournalEntry(existingEntry, incomingEntry) {
+function mergeJournalEntry(existingEntry, incomingEntry, existingPayloadUpdatedAt = "", incomingPayloadUpdatedAt = "") {
   const existingScore = journalCompletenessScore(existingEntry);
   const incomingScore = journalCompletenessScore(incomingEntry);
   const base = cloneValue(existingScore >= incomingScore ? existingEntry : incomingEntry);
@@ -240,7 +264,15 @@ function mergeJournalEntry(existingEntry, incomingEntry) {
   } else {
     delete base.aiSummaryUpdatedAt;
   }
-  base.keywords = mergeStringArrays(existingEntry.keywords, incomingEntry.keywords);
+  base.keywords = mergeKeywordField(existingEntry, incomingEntry, existingPayloadUpdatedAt, incomingPayloadUpdatedAt);
+  const incomingKeywordTime = getTimestampValue(incomingEntry.keywordsUpdatedAt || incomingEntry.updatedAt || incomingPayloadUpdatedAt);
+  const existingKeywordTime = getTimestampValue(existingEntry.keywordsUpdatedAt || existingEntry.updatedAt || existingPayloadUpdatedAt);
+  const keywordUpdatedAt = incomingKeywordTime >= existingKeywordTime
+    ? (incomingEntry.keywordsUpdatedAt || incomingEntry.updatedAt || incomingPayloadUpdatedAt)
+    : (existingEntry.keywordsUpdatedAt || existingEntry.updatedAt || existingPayloadUpdatedAt);
+  if (keywordUpdatedAt) {
+    base.keywordsUpdatedAt = keywordUpdatedAt;
+  }
 
   const commentsMap = new Map();
   [...(Array.isArray(existingEntry.comments) ? existingEntry.comments : []), ...(Array.isArray(incomingEntry.comments) ? incomingEntry.comments : [])].forEach((comment) => {
@@ -289,7 +321,11 @@ function mergePayloads(existingPayload, incomingPayload) {
     ...incoming,
     habits: mergeById(existing.habits, incoming.habits),
     records,
-    journalEntries: mergeById(existing.journalEntries, incoming.journalEntries, mergeJournalEntry)
+    journalEntries: mergeById(
+      existing.journalEntries,
+      incoming.journalEntries,
+      (existingEntry, incomingEntry) => mergeJournalEntry(existingEntry, incomingEntry, existing.lastModified, incoming.lastModified)
+    )
       .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0)),
     stats: {
       ...existing.stats,

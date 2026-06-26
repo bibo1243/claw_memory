@@ -11,6 +11,8 @@ const App = (() => {
   let awarenessTimeLeft = 10;
   let awarenessHabitId = null;
   let journalDraftKeywords = [];
+  let journalKeywordsTouched = false;
+  let blockedJournalKeywords = new Set();
   let isGoogleApiKeyVisible = false;
   let selectedJournalDate = new Date();
   let editingJournalEntryId = null;
@@ -29,6 +31,18 @@ const App = (() => {
 
   const WEEKDAY_LABELS = ['日', '一', '二', '三', '四', '五', '六'];
   const GOOGLE_API_KEY_STORAGE_KEY = 'habit-snowball-google-api-key';
+  const TEXT_SCALE_STORAGE_KEY = 'habit-snowball-text-scale';
+  const DEFAULT_TEXT_SCALE = 1;
+  const MIN_TEXT_SCALE = 0.9;
+  const MAX_TEXT_SCALE = 1.2;
+  const TEXT_SCALE_STEP = 0.1;
+  const TEXT_SCALE_LABELS = {
+    '0.9': '小字',
+    '1.0': '標準',
+    '1.1': '大字',
+    '1.2': '特大'
+  };
+  const OLLAMA_TUNNEL_TIMEOUT_MS = 3000;
   const GOOGLE_GEMINI_MODEL = 'gemini-2.5-flash';
   const KEYWORD_STOP_WORDS = new Set([
     '今天', '自己', '一個', '一些', '因為', '所以', '如果', '但是', '然後',
@@ -43,6 +57,61 @@ const App = (() => {
     /^這篇文章[^，。:：]*[，,：:]\s*/,
     /^這篇日記[^，。:：]*[，,：:]\s*/
   ];
+
+  function normalizeTextScale(scale) {
+    const parsed = Number(scale);
+    if (!Number.isFinite(parsed)) return DEFAULT_TEXT_SCALE;
+    const rounded = Math.round(parsed * 10) / 10;
+    return Math.min(MAX_TEXT_SCALE, Math.max(MIN_TEXT_SCALE, rounded));
+  }
+
+  function getSavedTextScale() {
+    return normalizeTextScale(localStorage.getItem(TEXT_SCALE_STORAGE_KEY) || DEFAULT_TEXT_SCALE);
+  }
+
+  function getTextScaleLabel(scale) {
+    const normalized = normalizeTextScale(scale).toFixed(1);
+    return TEXT_SCALE_LABELS[normalized] || TEXT_SCALE_LABELS[DEFAULT_TEXT_SCALE.toFixed(1)];
+  }
+
+  function updateTextScaleControls(scale) {
+    const label = getTextScaleLabel(scale);
+    const downBtn = document.getElementById('btn-text-scale-down');
+    const upBtn = document.getElementById('btn-text-scale-up');
+    const resetBtn = document.getElementById('btn-text-scale-reset');
+
+    if (downBtn) downBtn.disabled = scale <= MIN_TEXT_SCALE;
+    if (upBtn) upBtn.disabled = scale >= MAX_TEXT_SCALE;
+    if (resetBtn) {
+      resetBtn.textContent = label;
+      resetBtn.title = `目前字級：${label}，點擊恢復標準字級`;
+      resetBtn.setAttribute('aria-label', `目前字級 ${label}，點擊恢復標準字級`);
+    }
+  }
+
+  function applyTextScale(scale, options) {
+    const normalized = normalizeTextScale(scale);
+    document.documentElement.style.setProperty('--ui-font-scale', String(normalized));
+    localStorage.setItem(TEXT_SCALE_STORAGE_KEY, String(normalized));
+    updateTextScaleControls(normalized);
+
+    if (!(options && options.skipLayoutRefresh)) {
+      window.requestAnimationFrame(() => {
+        if (window.SnowballVis && typeof window.SnowballVis.resize === 'function') {
+          window.SnowballVis.resize();
+        }
+        if (typeof renderWeeklyChart === 'function') {
+          renderWeeklyChart();
+        }
+      });
+    }
+
+    return normalized;
+  }
+
+  function adjustTextScale(delta) {
+    return applyTextScale(getSavedTextScale() + delta);
+  }
 
   function htmlToMarkdown(html) {
     if (!html || !html.trim()) return '';
@@ -84,6 +153,7 @@ const App = (() => {
     lines.forEach(line => {
       const orderedMatch = line.match(/^(\d+)\.\s?(.*)$/);
       const bulletMatch = line.match(/^- (.*)$/);
+      const headingMatch = line.match(/^#{1,6}\s+(.*)$/);
 
       if (orderedMatch) {
         if (!inList || listType !== 'ol') {
@@ -102,6 +172,13 @@ const App = (() => {
           inList = true;
         }
         result.push(`<li>${bulletMatch[1] || ''}</li>`);
+      } else if (headingMatch) {
+        if (inList) {
+          result.push(listType === 'ol' ? '</ol>' : '</ul>');
+          inList = false;
+          listType = null;
+        }
+        result.push(`<p><strong>${headingMatch[1] || ''}</strong></p>`);
       } else {
         if (inList) {
           result.push(listType === 'ol' ? '</ol>' : '</ul>');
@@ -114,6 +191,59 @@ const App = (() => {
 
     if (inList) result.push(listType === 'ol' ? '</ol>' : '</ul>');
     return result.join('');
+  }
+
+  function insertHtmlAtCursor(editorEl, html) {
+    if (!editorEl || !html) return;
+    editorEl.focus();
+
+    var selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) {
+      editorEl.insertAdjacentHTML('beforeend', html);
+      return;
+    }
+
+    var range = selection.getRangeAt(0);
+    if (!editorEl.contains(range.commonAncestorContainer)) {
+      editorEl.insertAdjacentHTML('beforeend', html);
+      return;
+    }
+
+    range.deleteContents();
+
+    var container = document.createElement('div');
+    container.innerHTML = html;
+    var fragment = document.createDocumentFragment();
+    var lastNode = null;
+    var node = null;
+
+    while ((node = container.firstChild)) {
+      lastNode = fragment.appendChild(node);
+    }
+
+    range.insertNode(fragment);
+
+    if (lastNode) {
+      var nextRange = document.createRange();
+      nextRange.setStartAfter(lastNode);
+      nextRange.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(nextRange);
+    }
+  }
+
+  function handleEditorPaste(editorEl, event) {
+    var clipboard = event.clipboardData || window.clipboardData;
+    if (!clipboard) return;
+
+    var plainText = clipboard.getData('text/plain');
+    if (!plainText) return;
+
+    event.preventDefault();
+    var normalizedText = normalizeEditorText(plainText);
+    if (!normalizedText) return;
+
+    insertHtmlAtCursor(editorEl, markdownToHtml(normalizedText));
   }
 
   function formatAiSummaryHtml(summary) {
@@ -306,6 +436,22 @@ const App = (() => {
     localStorage.removeItem(GOOGLE_API_KEY_STORAGE_KEY);
   }
 
+  function hasGoogleAiFallback() {
+    return Boolean(getGoogleApiKey());
+  }
+
+  function formatAiSourceLabel(meta) {
+    if (meta && meta.provider && meta.model) {
+      return `${meta.provider} (${meta.model})`;
+    }
+    if (meta && meta.provider) {
+      return meta.provider;
+    }
+    return ollamaStatus === 'connected'
+      ? '本地 AI (gemma4)'
+      : (hasGoogleAiFallback() ? 'Google AI (Gemini)' : '本地 AI');
+  }
+
   function updateGoogleApiKeyStatus(message = '', isError = false) {
     const statusEl = document.getElementById('google-api-key-status-msg');
     if (!statusEl) return;
@@ -351,7 +497,7 @@ const App = (() => {
     try {
       console.log(`Checking if Ollama is reachable at tunnel: ${ollamaTunnelUrl}...`);
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 1500);
+      const timeoutId = setTimeout(() => controller.abort(), OLLAMA_TUNNEL_TIMEOUT_MS);
       const testRes = await fetch(ollamaTunnelUrl, {
         signal: controller.signal,
         headers: { 'Accept': 'text/plain' }
@@ -379,18 +525,22 @@ const App = (() => {
     if (!modeEl) return;
 
     if (ollamaStatus === 'testing') {
-      modeEl.textContent = '正在檢測 AI 連線...';
+      modeEl.textContent = hasGoogleAiFallback()
+        ? '檢測本地 AI 中 · Gemini 備援'
+        : '正在檢測本地 AI...';
       modeEl.style.color = '#8e92b2';
       modeEl.style.backgroundColor = 'rgba(142, 146, 178, 0.1)';
       modeEl.style.borderColor = 'rgba(142, 146, 178, 0.2)';
     } else if (ollamaStatus === 'connected') {
-      modeEl.textContent = '🟢 本地 AI (gemma4)';
+      modeEl.textContent = hasGoogleAiFallback()
+        ? '🟢 本地 AI 優先 · Gemini 備援'
+        : '🟢 本地 AI (gemma4)';
       modeEl.style.color = '#10b981';
       modeEl.style.backgroundColor = 'rgba(16, 185, 129, 0.1)';
       modeEl.style.borderColor = 'rgba(16, 185, 129, 0.2)';
     } else {
-      if (getGoogleApiKey()) {
-        modeEl.textContent = '🟡 雲端 AI (Gemini)';
+      if (hasGoogleAiFallback()) {
+        modeEl.textContent = '🟡 Gemini 備援（本地離線）';
         modeEl.style.color = '#f59e0b';
         modeEl.style.backgroundColor = 'rgba(245, 158, 11, 0.1)';
         modeEl.style.borderColor = 'rgba(245, 158, 11, 0.2)';
@@ -490,20 +640,8 @@ const App = (() => {
         editorEl.dispatchEvent(evt);
       }
     });
-
-    editorEl.addEventListener('input', function() {
-      var html = editorEl.innerHTML;
-      var markdown = htmlToMarkdown(html);
-      
-      var hasFormattingPattern = /(^|\n)(\d+\.\s|- )|\*\*[^\*]+\*\*|\*[^\*]+\*/.test(markdown);
-      if (!hasFormattingPattern) return;
-
-      var nextHtml = markdownToHtml(markdown);
-      if (nextHtml !== html) {
-        var savedSel = saveCaretPosition(editorEl);
-        editorEl.innerHTML = nextHtml;
-        restoreCaretPosition(editorEl, savedSel);
-      }
+    editorEl.addEventListener('paste', function(event) {
+      handleEditorPaste(editorEl, event);
     });
   }
 
@@ -541,7 +679,7 @@ const App = (() => {
           const freshUrl = payload.tunnelUrl ? payload.tunnelUrl.trim() : '';
           if (freshUrl) {
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 1500);
+            const timeoutId = setTimeout(() => controller.abort(), OLLAMA_TUNNEL_TIMEOUT_MS);
             const testRes = await fetch(freshUrl, {
               signal: controller.signal,
               headers: { 'Accept': 'text/plain' }
@@ -734,11 +872,19 @@ const App = (() => {
     throw lastError || new Error('google_ai_failed_all_models');
   }
 
-  async function generateAiJournalPolish(text) {
-    return callGoogleAiJson(
+  async function generateAiJournalPolish(text, options) {
+    var result = await callGoogleAiJson(
       '你是中文日記編輯。請把使用者原文潤成更順、更清楚、保留原意的繁體中文內容。必須保留原本的段落結構：一段文字就維持一段，原本是條列式就維持條列式。若是條列內容，請整理成 markdown 可辨識的大綱格式，例如 1. 2. 3. 或 - 。輸出 JSON：{"polished":"..."}，不要輸出其他內容。',
-      `請潤稿這篇日記：\n${text}`
+      `請潤稿這篇日記：\n${text}`,
+      options
     );
+    if (options && options.includeMeta) {
+      return {
+        polished: (result.data && result.data.polished) || '',
+        meta: result.meta || null
+      };
+    }
+    return result;
   }
   function getAllUniqueKeywords() {
     const journals = Storage.load().journalEntries || [];
@@ -753,12 +899,12 @@ const App = (() => {
     return Array.from(unique);
   }
 
-  async function generateAiJournalKeywords(text) {
+  async function generateAiJournalKeywords(text, options) {
     const existingKeywords = getAllUniqueKeywords();
     const existingStr = existingKeywords.length > 0
       ? `我們目前已經有使用的關鍵字庫為：[${existingKeywords.join(', ')}]。請仔細分析日記內容，並「優先」且「儘可能」從已有的關鍵字庫中挑選最符合日記主題的關鍵字（完全相同字樣的字詞）。如果已有庫中確實沒有適合的，你才可以自己創造新的關鍵字。`
       : '請自行根據日記內容創造適合的關鍵字。';
-    return callGoogleAiJson(
+    var result = await callGoogleAiJson(
       `你是中文 SEO 編輯與主題標籤設計師。請從日記中抽出 3 到 6 個最重要、可當作 SEO 標籤的繁體中文關鍵字。
 每個關鍵字請控制在 2 到 8 個字之間，不能是完整句子或太長的片語。
 
@@ -768,14 +914,30 @@ ${existingStr}
 {
   "keywords": ["關鍵字1", "關鍵字2", "關鍵字3"]
 }`,
-      `請抽取這篇日記的關鍵字：\n${text}`
+      `請抽取這篇日記的關鍵字：\n${text}`,
+      options
     );
+    if (options && options.includeMeta) {
+      return {
+        keywords: (result.data && result.data.keywords) || [],
+        meta: result.meta || null
+      };
+    }
+    return result;
   }
-  async function generateAiJournalTitle(text) {
-    return callGoogleAiJson(
+  async function generateAiJournalTitle(text, options) {
+    var result = await callGoogleAiJson(
       '你是中文編輯。請根據整篇文章內容做總結，生成一個精煉、具主題感的繁體中文標題。不要照抄第一句，不要包含日期，標題長度控制在 10 到 24 個字。輸出 JSON：{"title":"..."}。',
-      `請為這篇日記生成標題摘要：\n${text}`
+      `請為這篇日記生成標題摘要：\n${text}`,
+      options
     );
+    if (options && options.includeMeta) {
+      return {
+        title: (result.data && result.data.title) || '',
+        meta: result.meta || null
+      };
+    }
+    return result;
   }
 
   function startOfDay(dateLike) {
@@ -899,6 +1061,8 @@ ${existingStr}
   }
 
   async function init() {
+    applyTextScale(getSavedTextScale(), { skipLayoutRefresh: true });
+
     var loginIdentity = localStorage.getItem('login-identity');
     if (!loginIdentity) {
       var overlay = document.getElementById('identity-picker-overlay');
@@ -1793,17 +1957,31 @@ ${existingStr}
     setTimeout(() => editor.focus(), 200);
   }
 
-  function updateJournalKeywordPanel(keywords) {
+  function getKeywordKey(keyword) {
+    return normalizeEditorText(String(keyword || '')).toLowerCase();
+  }
+
+  function filterBlockedJournalKeywords(keywords) {
+    if (!blockedJournalKeywords.size) return keywords;
+    return keywords.filter(keyword => !blockedJournalKeywords.has(getKeywordKey(keyword)));
+  }
+
+  function updateJournalKeywordPanel(keywords, options) {
     const panel = document.getElementById('journal-keywords-panel');
     if (!panel) return;
 
-    journalDraftKeywords = keywords;
-    if (!keywords.length) {
+    const nextKeywords = filterBlockedJournalKeywords(keywords);
+    journalDraftKeywords = nextKeywords;
+    if (options && options.markTouched) {
+      journalKeywordsTouched = true;
+    }
+
+    if (!nextKeywords.length) {
       panel.innerHTML = '';
       return;
     }
 
-    panel.innerHTML = keywords
+    panel.innerHTML = nextKeywords
       .map(keyword => `
         <span class="journal-keyword-chip" style="display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:12px; background:var(--bg-glass); border:1px solid var(--border-subtle); font-size:12px; color:var(--text-secondary);">
           ${escapeHtml(keyword)}
@@ -1814,6 +1992,8 @@ ${existingStr}
   }
 
   function removeJournalKeyword(keywordToRemove) {
+    blockedJournalKeywords.add(getKeywordKey(keywordToRemove));
+    journalKeywordsTouched = true;
     journalDraftKeywords = journalDraftKeywords.filter(k => k !== keywordToRemove);
     updateJournalKeywordPanel(journalDraftKeywords);
   }
@@ -1821,6 +2001,8 @@ ${existingStr}
   function addJournalKeyword(keyword) {
     const k = keyword.trim();
     if (k && !journalDraftKeywords.includes(k)) {
+      blockedJournalKeywords.delete(getKeywordKey(k));
+      journalKeywordsTouched = true;
       journalDraftKeywords.push(k);
       updateJournalKeywordPanel(journalDraftKeywords);
     }
@@ -1892,20 +2074,17 @@ ${existingStr}
     }
 
     try {
-      if (getGoogleApiKey() || ollamaStatus === 'connected') {
-        try {
-          const aiResult = await generateAiJournalPolish(sourceText);
-          const aiText = normalizeEditorText((aiResult ? aiResult.polished : '') || '');
-          if (aiText) {
-            document.getElementById('journal-input').innerHTML = markdownToHtml(aiText);
-            const source = ollamaStatus === 'connected' ? '本地 AI (gemma4)' : 'Google AI';
-            Animations.toast(`已使用 ${source} 完成潤稿`, 'success');
-            return;
-          }
-        } catch (error) {
-          console.error('AI polish failed:', error);
-          updateGoogleApiKeyStatus('AI 潤稿失敗，已改用本地規則。', true);
+      try {
+        const aiResult = await generateAiJournalPolish(sourceText, { includeMeta: true });
+        const aiText = normalizeEditorText((aiResult ? aiResult.polished : '') || '');
+        if (aiText) {
+          document.getElementById('journal-input').innerHTML = markdownToHtml(aiText);
+          Animations.toast(`已使用 ${formatAiSourceLabel(aiResult.meta)} 完成潤稿`, 'success');
+          return;
         }
+      } catch (error) {
+        console.error('AI polish failed:', error);
+        updateGoogleApiKeyStatus('AI 潤稿暫時不可用，已改用本地規則。', true);
       }
 
       if (!polished) {
@@ -1936,26 +2115,23 @@ ${existingStr}
     }
 
     try {
-      if (getGoogleApiKey() || ollamaStatus === 'connected') {
-        try {
-          const aiResult = await generateAiJournalKeywords(sourceText);
-          const aiKeywords = (aiResult && Array.isArray(aiResult.keywords))
-            ? normalizeSeoKeywords(aiResult.keywords, 6)
-            : [];
-          if (aiKeywords.length) {
-            updateJournalKeywordPanel(aiKeywords);
-            const source = ollamaStatus === 'connected' ? '本地 AI (gemma4)' : 'Google AI';
-            Animations.toast(`已使用 ${source} 產生關鍵字`, 'success');
-            return;
-          }
-        } catch (error) {
-          console.error('AI keywords failed:', error);
-          updateGoogleApiKeyStatus('AI 關鍵字生成失敗，已改用本地規則。', true);
+      try {
+        const aiResult = await generateAiJournalKeywords(sourceText, { includeMeta: true });
+        const aiKeywords = (aiResult && Array.isArray(aiResult.keywords))
+          ? normalizeSeoKeywords(aiResult.keywords, 6)
+          : [];
+        if (aiKeywords.length) {
+          updateJournalKeywordPanel(aiKeywords, { markTouched: true });
+          Animations.toast(`已使用 ${formatAiSourceLabel(aiResult.meta)} 產生關鍵字`, 'success');
+          return;
         }
+      } catch (error) {
+        console.error('AI keywords failed:', error);
+        updateGoogleApiKeyStatus('AI 關鍵字生成暫時不可用，已改用本地規則。', true);
       }
 
       const keywords = extractKeywords(sourceText);
-      updateJournalKeywordPanel(keywords);
+      updateJournalKeywordPanel(keywords, { markTouched: true });
       Animations.toast(keywords.length ? '已使用本地規則產生關鍵字' : '內容太少，暫時無法提取關鍵字', keywords.length ? 'success' : 'warning');
     } finally {
       if (btn) {
@@ -1980,17 +2156,17 @@ ${existingStr}
 
     try {
       let generatedTitle = '';
-      if (getGoogleApiKey() || ollamaStatus === 'connected') {
-        try {
-          const aiResult = await generateAiJournalTitle(text);
-          const aiTitle = normalizeEditorText((aiResult ? aiResult.title : '') || '');
-          if (aiTitle) {
-            generatedTitle = `${formatZhDate(getSelectedJournalDate())}-${aiTitle}`;
-          }
-        } catch (error) {
-          console.error('AI title failed:', error);
-          updateGoogleApiKeyStatus('AI 主題生成失敗，已改用本地規則。', true);
+      let titleSource = '';
+      try {
+        const aiResult = await generateAiJournalTitle(text, { includeMeta: true });
+        const aiTitle = normalizeEditorText((aiResult ? aiResult.title : '') || '');
+        if (aiTitle) {
+          generatedTitle = `${formatZhDate(getSelectedJournalDate())}-${aiTitle}`;
+          titleSource = formatAiSourceLabel(aiResult.meta);
         }
+      } catch (error) {
+        console.error('AI title failed:', error);
+        updateGoogleApiKeyStatus('AI 主題生成暫時不可用，已改用本地規則。', true);
       }
 
       if (!generatedTitle) {
@@ -2000,7 +2176,7 @@ ${existingStr}
       const titleInput = document.getElementById('journal-title-input');
       if (titleInput) titleInput.value = generatedTitle;
       syncJournalTitleHint();
-      Animations.toast('已生成主題標題', 'success');
+      Animations.toast(titleSource ? `已使用 ${titleSource} 生成主題` : '已使用本地規則生成主題', 'success');
     } finally {
       if (btn) {
         btn.disabled = false;
@@ -2036,6 +2212,8 @@ ${existingStr}
     if (titleInput) titleInput.value = '';
     if (editor) editor.innerHTML = '';
     updateJournalKeywordPanel([]);
+    journalKeywordsTouched = false;
+    blockedJournalKeywords = new Set();
     setSelectedJournalDate(new Date());
     editingJournalEntryId = null;
     const lastAuthor = localStorage.getItem('last-selected-author') || '小葦';
@@ -2058,7 +2236,9 @@ ${existingStr}
     const entryDate = getSelectedJournalDate();
     const title = (titleInput ? titleInput.value.trim() : '') || generateJournalTitle(content, entryDate);
     const polishedContent = polishJournalText(content);
-    const keywords = journalDraftKeywords.length ? journalDraftKeywords : extractKeywords(content);
+    const keywords = journalKeywordsTouched
+      ? journalDraftKeywords
+      : filterBlockedJournalKeywords(journalDraftKeywords.length ? journalDraftKeywords : extractKeywords(content));
     const wasEditing = Boolean(editingJournalEntryId);
 
     const activeAuthorBtn = document.querySelector('.author-btn.active');
@@ -2101,6 +2281,8 @@ ${existingStr}
     const editor = document.getElementById('journal-input');
     if (titleInput) titleInput.value = entry.title || '';
     if (editor) editor.innerHTML = markdownToHtml(entry.content || entry.polishedContent || '');
+    journalKeywordsTouched = false;
+    blockedJournalKeywords = new Set();
     updateJournalKeywordPanel(Array.isArray(entry.keywords) ? entry.keywords : []);
     const currentAuthor = entry.author || '小葦';
     document.querySelectorAll('.author-btn').forEach(btn => {
@@ -2453,11 +2635,11 @@ ${existingStr}
       var t = (c.tags || []).join(', ');
       var sticker = c.sticker ? ' [貼圖: ' + c.sticker + ']' : '';
       return c.author + ': ' + c.content + sticker + (t ? ' (標註: ' + t + ')' : '');
-    }).join('\n');
+    }).join('\n') || '目前尚無評論，請先根據日記本身做總結，並在點評回應段落說明目前尚無評論可回應。';
     
     var userPrompt = '日記內容：\n' + journalContent + '\n\n對話評論：\n' + commentsText;
     
-    var systemPrompt = '請分析給定的日記內容與下方的讀者對話評論。請以繁體中文撰寫一段「AI 對話總結、點評與建議」，字數請控制在 300 字以內，口吻需客觀、溫暖、富有洞察力且有建設性。請嚴格依照以下格式輸出 summary 內容：第一段使用 `**日記總結：**` 作為粗體標題，後面直接接一小段總結日記的重點與作者的精進收穫；第二段使用 `**點評回應：**` 作為粗體標題，後面直接接一小段對評論區留言的點評與回應；第三段使用 `**個人成長建議：**` 作為粗體標題，標題後面換行，再提出至少三項具體行動方案，且只有這一段可以使用數字編號，格式必須是 `1. ...`、`2. ...`、`3. ...`，每一點都要獨立換行。除了「個人成長建議」這一段之外，其他段落都不得使用數字編號、條列或 `1. 2. 3.`。請務必輸出 JSON 格式：{"summary": "..."}。summary 欄位可以包含換行與 `**粗體**` markdown，但不要輸出 code fence、HTML 或其他額外標記。';
+    var systemPrompt = '請分析給定的日記內容與下方的讀者對話評論。若目前尚無評論，仍要根據日記內容產生總結，並在「點評回應」段落簡短說明目前尚無評論可回應。請以繁體中文撰寫一段「AI 對話總結、點評與建議」，字數請控制在 300 字以內，口吻需客觀、溫暖、富有洞察力且有建設性。請嚴格依照以下格式輸出 summary 內容：第一段使用 `**日記總結：**` 作為粗體標題，後面直接接一小段總結日記的重點與作者的精進收穫；第二段使用 `**點評回應：**` 作為粗體標題，後面直接接一小段對評論區留言的點評與回應；第三段使用 `**個人成長建議：**` 作為粗體標題，標題後面換行，再提出至少三項具體行動方案，且只有這一段可以使用數字編號，格式必須是 `1. ...`、`2. ...`、`3. ...`，每一點都要獨立換行。除了「個人成長建議」這一段之外，其他段落都不得使用數字編號、條列或 `1. 2. 3.`。請務必輸出 JSON 格式：{"summary": "..."}。summary 欄位可以包含換行與 `**粗體**` markdown，但不要輸出 code fence、HTML 或其他額外標記。';
     
     var result = await callGoogleAiJson(systemPrompt, userPrompt, {
       includeMeta: true,
@@ -2475,10 +2657,6 @@ ${existingStr}
     if (!entry) return;
     
     var comments = getVisibleComments(entry.comments);
-    if (comments.length === 0) {
-      Animations.toast('尚無對話評論，無法生成總結', 'warning');
-      return;
-    }
     
     if (!getGoogleApiKey() && ollamaStatus !== 'connected') {
       Animations.toast('請先連線至本地 AI 或填寫 Google AI API Key', 'error');
@@ -2585,38 +2763,36 @@ ${existingStr}
       return '<span class="sticker-select-option' + ((editingComment && editingComment.sticker === s) ? ' selected' : '') + '" style="font-size: 22px; cursor: pointer; padding: 4px; border-radius: 4px; transition: background 0.2s;' + ((editingComment && editingComment.sticker === s) ? ' background: rgba(168, 216, 234, 0.3);' : '') + '" onclick="App.selectCommentSticker(this, \'' + s + '\')">' + s + '</span>';
     }).join('');
 
+    var summaryStatusHtml = summaryLoadingState
+      ? '<div class="ai-summary-status is-loading">' +
+          '<span class="ai-summary-spinner"></span>' +
+          '<div>' +
+            '<div class="ai-summary-status-title">AI 正在總結中...</div>' +
+            '<div class="ai-summary-status-model">目前模型：' + escapeHtml(summaryLoadingState.provider + ' / ' + summaryLoadingState.model) + '</div>' +
+          '</div>' +
+        '</div>'
+      : '';
     var aiSummarySectionHtml = '';
-    if (comments.length > 0) {
-      var summaryStatusHtml = summaryLoadingState
-        ? '<div class="ai-summary-status is-loading">' +
-            '<span class="ai-summary-spinner"></span>' +
-            '<div>' +
-              '<div class="ai-summary-status-title">AI 正在總結中...</div>' +
-              '<div class="ai-summary-status-model">目前模型：' + escapeHtml(summaryLoadingState.provider + ' / ' + summaryLoadingState.model) + '</div>' +
-            '</div>' +
-          '</div>'
-        : '';
-      if (aiSummary) {
-        aiSummarySectionHtml = '<div class="ai-summary-card" style="margin-top: 16px; padding: 14px; border-radius: var(--radius-md); background: rgba(168, 216, 234, 0.05); border: 1px solid rgba(168, 216, 234, 0.15);">' +
-            '<div style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px;">' +
-              '<span style="font-size: 16px;">🤖</span>' +
-              '<strong style="font-size: 14px; color: var(--accent-1);">AI 對話總結</strong>' +
-              '<button type="button" class="history-delete-btn" style="margin-left: auto; padding: 2px 8px; font-size: 10px;" onclick="App.regenerateSummary(\'' + entry.id + '\')" ' + (summaryLoadingState ? 'disabled' : '') + '>' + (summaryLoadingState ? '總結中...' : '重新總結') + '</button>' +
-            '</div>' +
-            summaryStatusHtml +
-            '<div class="ai-summary-body" style="font-size: 13px; color: var(--text-secondary); line-height: 1.75;">' + formatAiSummaryHtml(aiSummary) + '</div>' +
-          '</div>';
-      } else {
-        aiSummarySectionHtml = '<div class="ai-summary-card" style="margin-top: 16px; padding: 14px; border-radius: var(--radius-md); background: rgba(168, 216, 234, 0.05); border: 1px solid rgba(168, 216, 234, 0.15);">' +
-            (summaryLoadingState
-              ? summaryStatusHtml + '<div style="font-size: 12px; color: var(--text-muted); line-height: 1.7;">正在分析日記與評論，完成後會自動顯示在這裡。</div>'
-              : '<div style="text-align: center;">' +
-                  '<button type="button" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px;" onclick="App.generateSummary(\'' + entry.id + '\')">' +
-                    '<span>✨</span> 生成 AI 對話總結' +
-                  '</button>' +
-                '</div>') +
-          '</div>';
-      }
+    if (aiSummary) {
+      aiSummarySectionHtml = '<div class="ai-summary-card" style="margin-top: 16px; padding: 14px; border-radius: var(--radius-md); background: rgba(168, 216, 234, 0.05); border: 1px solid rgba(168, 216, 234, 0.15);">' +
+          '<div style="display: flex; align-items: center; gap: 6px; margin-bottom: 8px;">' +
+            '<span style="font-size: 16px;">🤖</span>' +
+            '<strong style="font-size: 14px; color: var(--accent-1);">AI 對話總結</strong>' +
+            '<button type="button" class="history-delete-btn" style="margin-left: auto; padding: 2px 8px; font-size: 10px;" onclick="App.regenerateSummary(\'' + entry.id + '\')" ' + (summaryLoadingState ? 'disabled' : '') + '>' + (summaryLoadingState ? '總結中...' : '重新總結') + '</button>' +
+          '</div>' +
+          summaryStatusHtml +
+          '<div class="ai-summary-body" style="font-size: 13px; color: var(--text-secondary); line-height: 1.75;">' + formatAiSummaryHtml(aiSummary) + '</div>' +
+        '</div>';
+    } else {
+      aiSummarySectionHtml = '<div class="ai-summary-card" style="margin-top: 16px; padding: 14px; border-radius: var(--radius-md); background: rgba(168, 216, 234, 0.05); border: 1px solid rgba(168, 216, 234, 0.15);">' +
+          (summaryLoadingState
+            ? summaryStatusHtml + '<div style="font-size: 12px; color: var(--text-muted); line-height: 1.7;">正在分析日記' + (comments.length ? '與評論' : '') + '，完成後會自動顯示在這裡。</div>'
+            : '<div style="text-align: center;">' +
+                '<button type="button" class="btn btn-secondary" style="font-size: 12px; padding: 6px 12px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px;" onclick="App.generateSummary(\'' + entry.id + '\')">' +
+                  '<span>✨</span> 生成 AI 對話總結' +
+                '</button>' +
+              '</div>') +
+        '</div>';
     }
 
     var currentLoginIdentity = localStorage.getItem('login-identity') || '小葦';
@@ -2632,10 +2808,10 @@ ${existingStr}
         '<h4 style="font-size: 14px; font-weight: 700; color: var(--text-primary); margin-bottom: 12px; display: flex; align-items: center; gap: 6px;">' +
           '<span>💬</span> 評論與貼圖回饋 (' + comments.length + ')' +
         '</h4>' +
-        '<div class="comments-list" style="max-height: 300px; overflow-y: auto; margin-bottom: 16px; padding-right: 4px;">' +
+        aiSummarySectionHtml +
+        '<div class="comments-list" style="max-height: 300px; overflow-y: auto; margin: 16px 0; padding-right: 4px;">' +
           commentsListHtml +
         '</div>' +
-        aiSummarySectionHtml +
         '<div class="add-comment-box" data-comment-entry-id="' + entry.id + '" style="margin-top: 16px; padding: 12px; border-radius: var(--radius-md); background: var(--bg-comment-box); border: 1px solid var(--border-subtle);">' +
           '<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">' +
             '<span style="font-size: 12px; font-weight: 600; color: var(--text-secondary);">' + commentEditorTitle + '</span>' +
@@ -2939,6 +3115,9 @@ ${existingStr}
 
 
     addEvent('btn-reset-all-data', 'click', resetAllData);
+    addEvent('btn-text-scale-down', 'click', () => adjustTextScale(-TEXT_SCALE_STEP));
+    addEvent('btn-text-scale-reset', 'click', () => applyTextScale(DEFAULT_TEXT_SCALE));
+    addEvent('btn-text-scale-up', 'click', () => adjustTextScale(TEXT_SCALE_STEP));
 
     function handleAuthorChange(authorName) {
       localStorage.setItem('last-selected-author', authorName);

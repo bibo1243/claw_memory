@@ -118,10 +118,18 @@
     })();
   </script>
   <script>
-    window.HABIT_SNOWBALL_VERSION = '20260625_2250';
+    (function() {
+      var savedScale = parseFloat((window.localStorage && window.localStorage.getItem('habit-snowball-text-scale')) || '1');
+      if (!isFinite(savedScale)) savedScale = 1;
+      savedScale = Math.min(1.2, Math.max(0.9, Math.round(savedScale * 10) / 10));
+      document.documentElement.style.setProperty('--ui-font-scale', String(savedScale));
+    })();
+  </script>
+  <script>
+    window.HABIT_SNOWBALL_VERSION = '20260626_1045';
   </script>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>❄️</text></svg>">
-  <link rel="stylesheet" href="css/style.css?v=20260625_2250">
+  <link rel="stylesheet" href="css/style.css?v=20260626_1045">
 </head>
 <body>
   <!-- 載入中遮罩 (Loading Screen) -->
@@ -165,8 +173,11 @@
     <!-- 頂部粘性 Header -->
     <header class="app-header">
       <div class="header-main-row">
-        <h1 class="app-title">📓 日精進</h1>
-        <div style="display: flex; align-items: center; gap: 8px;">
+        <h1 class="app-title">
+          <span class="app-title-icon" aria-hidden="true">📓</span>
+          <span>日精進</span>
+        </h1>
+        <div class="header-actions">
           <!-- 全域填寫人切換器 (支援多選) -->
           <div class="global-author-toggle">
             <div class="g-author-wrapper">
@@ -184,13 +195,18 @@
               <span class="g-author-badge" id="badge-author-flower"></span>
             </div>
           </div>
+          <div class="font-scale-controls" aria-label="字級控制">
+            <button type="button" class="font-scale-btn" id="btn-text-scale-down" title="縮小文字">A−</button>
+            <button type="button" class="font-scale-value" id="btn-text-scale-reset" title="恢復標準字級">標準</button>
+            <button type="button" class="font-scale-btn" id="btn-text-scale-up" title="放大文字">A+</button>
+          </div>
           <!-- 主題切換按鈕 -->
           <button type="button" class="theme-toggle-btn" id="btn-theme-toggle" title="切換主題" onclick="App.toggleTheme()">
             <span class="theme-icon">☀️</span>
           </button>
         </div>
       </div>
-      <div class="search-bar-wrapper" style="position: relative;">
+      <div class="search-bar-wrapper">
         <input type="text" id="journal-search-input" class="search-input" placeholder="搜尋標題、內容或關鍵字..." autocomplete="off">
         <div id="search-keyword-suggestions" class="keyword-dropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); z-index: 100; max-height: 200px; overflow-y: auto; margin-top: 4px; box-shadow: var(--shadow-card);"></div>
       </div>
@@ -277,10 +293,10 @@
 
       <div class="habit-card" style="margin-bottom: 16px;">
         <h3 class="habit-name" style="margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
-          <span>🤖</span> Google AI API Key
+          <span>🤖</span> Google AI API Key（備援）
         </h3>
         <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.4;">
-          填入後，日記的 AI 潤稿、關鍵字與主題生成會優先使用 Google AI。未填入時，系統會改用本地規則。
+          日精進主文的 AI 潤稿、關鍵字與主題生成會優先嘗試本地模型；只有本地模型暫時不可用時，才會改用這組 Google AI API Key 作為備援。
         </p>
         <div style="display: flex; gap: 8px; align-items: center;">
           <input type="password" id="google-api-key-input" class="form-input" style="flex: 1; margin: 0; padding: 10px; height: 38px;" placeholder="AIza...">
@@ -574,11 +590,11 @@
     </div>
   </div>
 
-  <script src="js/scoring.js?v=20260625_2250"></script>
-  <script src="js/storage.js?v=20260625_2250"></script>
-  <script src="js/particles.js?v=20260625_2250"></script>
-  <script src="js/snowball.js?v=20260625_2250"></script>
-  <script src="js/animations.js?v=20260625_2250"></script>
-  <script src="js/app.js?v=20260625_2250"></script>
+  <script src="js/scoring.js?v=20260626_1045"></script>
+  <script src="js/storage.js?v=20260626_1045"></script>
+  <script src="js/particles.js?v=20260626_1045"></script>
+  <script src="js/snowball.js?v=20260626_1045"></script>
+  <script src="js/animations.js?v=20260626_1045"></script>
+  <script src="js/app.js?v=20260626_1045"></script>
 </body>
 </html>
