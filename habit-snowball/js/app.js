@@ -2681,12 +2681,16 @@ ${existingStr}
       });
       var summaryText = summaryResult.summary;
       if (summaryText) {
+        var sourceMeta = summaryResult.meta || {};
+        var sourceLabel = sourceMeta.provider && sourceMeta.model
+          ? `${sourceMeta.provider} / ${sourceMeta.model}`
+          : (ollamaStatus === 'connected' ? '本地 AI / gemma4:e4b' : 'Google AI / Gemini');
+        var signedSummaryText = normalizeEditorText(summaryText) + '\n\n署名：' + sourceLabel;
         Storage.updateJournalEntry(entryId, {
-          aiSummary: summaryText
+          aiSummary: signedSummaryText
         });
         setSummaryLoadingState(entryId, null);
         renderAll();
-        var sourceMeta = summaryResult.meta || {};
         var source = sourceMeta.provider && sourceMeta.model
           ? `${sourceMeta.provider} (${sourceMeta.model})`
           : (ollamaStatus === 'connected' ? '本地 AI (gemma4)' : 'Google AI');
