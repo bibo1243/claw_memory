@@ -256,18 +256,30 @@ const Storage = (() => {
   }
 
   function mergeJournalEntry(remoteEntry, localEntry, preferredSummarySource = 'richer') {
-    const remoteScore = journalCompletenessScore(remoteEntry);
-    const localScore = journalCompletenessScore(localEntry);
-    const base = cloneValue(remoteScore >= localScore ? remoteEntry : localEntry);
+    const remoteTime = getTimestampValue(remoteEntry.updatedAt || remoteEntry.createdAt);
+    const localTime = getTimestampValue(localEntry.updatedAt || localEntry.createdAt);
+
+    // Choose the version with the newer updatedAt timestamp as the base
+    const base = cloneValue(localTime >= remoteTime ? localEntry : remoteEntry);
 
     base.id = remoteEntry.id || localEntry.id;
-    base.author = remoteEntry.author || localEntry.author || '小葦';
+    base.author = localTime >= remoteTime ? (localEntry.author || remoteEntry.author) : (remoteEntry.author || localEntry.author);
     base.createdAt = remoteEntry.createdAt || localEntry.createdAt || new Date().toISOString();
-    base.title = remoteScore >= localScore
-      ? (remoteEntry.title || localEntry.title || '')
-      : (localEntry.title || remoteEntry.title || '');
-    base.content = preferRicherText(remoteEntry.content, localEntry.content);
-    base.polishedContent = preferRicherText(remoteEntry.polishedContent, localEntry.polishedContent);
+    base.updatedAt = localTime >= remoteTime ? (localEntry.updatedAt || new Date().toISOString()) : (remoteEntry.updatedAt || new Date().toISOString());
+
+    // Title, content, polishedContent, and images are strictly taken from the newer version to prevent edit reversion.
+    if (localTime >= remoteTime) {
+      base.title = localEntry.title !== undefined ? localEntry.title : (remoteEntry.title || '');
+      base.content = localEntry.content !== undefined ? localEntry.content : (remoteEntry.content || '');
+      base.polishedContent = localEntry.polishedContent !== undefined ? localEntry.polishedContent : (remoteEntry.polishedContent || '');
+      base.images = Array.isArray(localEntry.images) ? localEntry.images : (remoteEntry.images || []);
+    } else {
+      base.title = remoteEntry.title !== undefined ? remoteEntry.title : (localEntry.title || '');
+      base.content = remoteEntry.content !== undefined ? remoteEntry.content : (localEntry.content || '');
+      base.polishedContent = remoteEntry.polishedContent !== undefined ? remoteEntry.polishedContent : (localEntry.polishedContent || '');
+      base.images = Array.isArray(remoteEntry.images) ? remoteEntry.images : (localEntry.images || []);
+    }
+
     const summaryMeta = mergeAiSummary(
       remoteEntry,
       localEntry,
@@ -279,6 +291,7 @@ const Storage = (() => {
     } else {
       delete base.aiSummaryUpdatedAt;
     }
+    
     base.keywords = mergeKeywordField(remoteEntry, localEntry, preferredSummarySource);
     const keywordUpdatedAt = getMergedKeywordUpdatedAt(remoteEntry, localEntry, preferredSummarySource);
     if (keywordUpdatedAt) {
