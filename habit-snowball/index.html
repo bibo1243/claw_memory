@@ -581,6 +581,25 @@
     </div>
   </div>
 
+  <!-- AI 潤稿修改建議彈窗 -->
+  <div class="modal-overlay" id="journal-polish-diff-modal">
+    <div class="modal-content" style="max-width: 500px; border: 1px solid var(--border-subtle); background: var(--bg-secondary); box-shadow: var(--shadow-card);">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+        <h2 class="modal-title" style="margin: 0; font-size: 18px; display: flex; align-items: center; gap: 8px;">✍️ AI 潤稿修改重點</h2>
+        <span class="modal-close" style="cursor: pointer; font-size: 28px; line-height: 1; color: var(--text-secondary);" onclick="document.getElementById('journal-polish-diff-modal').classList.remove('active')">&times;</span>
+      </div>
+      <div style="margin-bottom: 20px; font-size: 14px; color: var(--text-secondary); line-height: 1.6;">
+        <p style="margin-bottom: 12px; font-weight: 600; color: var(--text-primary);">本次潤稿為您優化了以下內容：</p>
+        <ul id="journal-polish-diff-list" style="padding-left: 20px; margin: 0; list-style-type: decimal; display: flex; flex-direction: column; gap: 6px;">
+          <!-- 由 JS 動態填入 -->
+        </ul>
+      </div>
+      <div style="text-align: right;">
+        <button type="button" class="btn btn-primary" onclick="document.getElementById('journal-polish-diff-modal').classList.remove('active')" style="padding: 8px 24px;">關閉</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 放大檢視燈箱 (Lightbox) -->
   <div class="modal-overlay" id="image-zoom-modal" style="background: rgba(0, 0, 0, 0.95);">
     <span class="modal-close" style="position: absolute; top: 20px; right: 20px; font-size: 40px; color: #fff; z-index: 1001;" onclick="document.getElementById('image-zoom-modal').classList.remove('active')">&times;</span>

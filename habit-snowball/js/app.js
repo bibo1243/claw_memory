@@ -11,6 +11,8 @@ const App = (() => {
   let awarenessTimeLeft = 10;
   let awarenessHabitId = null;
   let journalDraftKeywords = [];
+  let journalDraftImages = [];
+  let activeImageDetailId = null;
   let journalKeywordsTouched = false;
   let blockedJournalKeywords = new Set();
   let isGoogleApiKeyVisible = false;
@@ -315,6 +317,11 @@ const App = (() => {
     const dateLabel = document.getElementById('journal-current-date');
     if (dateInput) dateInput.value = formatDateInputValue(selectedJournalDate);
     if (dateLabel) dateLabel.textContent = formatZhDate(selectedJournalDate);
+
+    const modal = document.getElementById('journal-composer-modal');
+    if (modal && modal.classList.contains('show')) {
+      saveJournalDraftToStorage();
+    }
   }
 
   function addDays(dateLike, days) {
@@ -874,13 +881,14 @@ const App = (() => {
 
   async function generateAiJournalPolish(text, options) {
     var result = await callGoogleAiJson(
-      '你是中文日記編輯。請把使用者原文潤成更順、更清楚、保留原意的繁體中文內容。必須保留原本的段落結構：一段文字就維持一段，原本是條列式就維持條列式。若是條列內容，請整理成 markdown 可辨識的大綱格式，例如 1. 2. 3. 或 - 。輸出 JSON：{"polished":"..."}，不要輸出其他內容。',
+      '你是中文日記編輯。請把使用者原文潤成更順、更清楚、保留原意的繁體中文內容。必須保留原本的段落結構：一段文字就維持一段，原本是條列式就維持條列式。若是條列內容，請整理成 markdown 可辨識的大綱格式，例如 1. 2. 3. 或 - 。請同時提供一組對比清單，說明本次潤稿相較於原文進行了哪些重要的修正或改進。輸出 JSON 格式如下：{"polished":"...", "changes":["條列出本次潤稿的修改重點，包括修正錯字、調整語句、或重新排版的地方... (繁體中文)"]}，不要輸出其他內容。',
       `請潤稿這篇日記：\n${text}`,
       options
     );
     if (options && options.includeMeta) {
       return {
         polished: (result.data && result.data.polished) || '',
+        changes: (result.data && Array.isArray(result.data.changes)) ? result.data.changes : [],
         meta: result.meta || null
       };
     }
@@ -1629,6 +1637,17 @@ ${existingStr}
         displayContent = highlightKeyword(displayContent, query);
       }
 
+      const images = Array.isArray(entry.images) ? entry.images : [];
+      const imagesHtml = images.length > 0 ? `
+        <div class="journal-entry-images-grid" style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; margin-bottom: 12px;">
+          ${images.map(img => `
+            <div class="journal-entry-image-thumb" style="width: 80px; height: 80px; border-radius: 6px; overflow: hidden; border: 1px solid var(--border-subtle); cursor: pointer;" onclick="App.zoomJournalImageOnly('${img.url}', '${escapeHtml(img.caption || '')}')">
+              <img src="${img.url}" style="width: 100%; height: 100%; object-fit: cover;" />
+            </div>
+          `).join('')}
+        </div>
+      ` : '';
+
       return `
         <div class="habit-card journal-entry-card ${cardAuthorClass}" onclick="App.handleJournalCardClick(event, '${entry.id}')">
           <div class="journal-entry-top">
@@ -1664,6 +1683,7 @@ ${existingStr}
             ${displayContent}
             ${renderCommentsSection(entry, query)}
           </div>
+          ${imagesHtml}
           <div class="journal-card-actions">
             <button class="btn btn-secondary journal-card-btn" onclick="App.editJournalEntry('${entry.id}')" title="編輯這篇日記">編輯這篇日記</button>
             <button class="btn btn-secondary journal-card-btn journal-card-btn-danger" onclick="App.deleteJournalEntry('${entry.id}')" title="刪除此篇日記">刪除這篇日記</button>
@@ -1978,17 +1998,21 @@ ${existingStr}
 
     if (!nextKeywords.length) {
       panel.innerHTML = '';
-      return;
+    } else {
+      panel.innerHTML = nextKeywords
+        .map(keyword => `
+          <span class="journal-keyword-chip" style="display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:12px; background:var(--bg-glass); border:1px solid var(--border-subtle); font-size:12px; color:var(--text-secondary);">
+            ${escapeHtml(keyword)}
+            <span class="keyword-remove" onclick="App.removeJournalKeyword('${escapeHtml(keyword)}')" style="cursor:pointer; color:var(--accent-negative); font-weight:bold;">&times;</span>
+          </span>
+        `)
+        .join('');
     }
 
-    panel.innerHTML = nextKeywords
-      .map(keyword => `
-        <span class="journal-keyword-chip" style="display:inline-flex; align-items:center; gap:4px; padding:2px 8px; border-radius:12px; background:var(--bg-glass); border:1px solid var(--border-subtle); font-size:12px; color:var(--text-secondary);">
-          ${escapeHtml(keyword)}
-          <span class="keyword-remove" onclick="App.removeJournalKeyword('${escapeHtml(keyword)}')" style="cursor:pointer; color:var(--accent-negative); font-weight:bold;">&times;</span>
-        </span>
-      `)
-      .join('');
+    const modal = document.getElementById('journal-composer-modal');
+    if (modal && modal.classList.contains('show')) {
+      saveJournalDraftToStorage();
+    }
   }
 
   function removeJournalKeyword(keywordToRemove) {
@@ -2059,6 +2083,16 @@ ${existingStr}
     if (nextBtn) nextBtn.disabled = currentIndex === -1 || currentIndex >= entries.length - 1;
   }
 
+  function showPolishDiffModal(changes) {
+    const list = document.getElementById('journal-polish-diff-list');
+    const modal = document.getElementById('journal-polish-diff-modal');
+    if (!list || !modal) return;
+    
+    const items = Array.isArray(changes) && changes.length > 0 ? changes : ['優化語意表達，使日記段落更為通順。'];
+    list.innerHTML = items.map(item => `<li>${escapeHtml(item)}</li>`).join('');
+    modal.classList.add('active');
+  }
+
   async function handleJournalPolish() {
     const polished = polishJournalText(getJournalDraftText());
     const sourceText = getJournalDraftText();
@@ -2080,6 +2114,7 @@ ${existingStr}
         if (aiText) {
           document.getElementById('journal-input').innerHTML = markdownToHtml(aiText);
           Animations.toast(`已使用 ${formatAiSourceLabel(aiResult.meta)} 完成潤稿`, 'success');
+          showPolishDiffModal(aiResult.changes || ['優化了詞彙表達與句子結構', '修飾了語氣使其更為順暢']);
           return;
         }
       } catch (error) {
@@ -2093,11 +2128,13 @@ ${existingStr}
       }
       document.getElementById('journal-input').innerHTML = markdownToHtml(polished);
       Animations.toast('已使用本地規則完成潤稿', 'success');
+      showPolishDiffModal(['排版優化：修正換行與段落結構', '空行清理：移除重複的多餘空行']);
     } finally {
       if (btn) {
         btn.disabled = false;
         btn.textContent = 'AI 潤稿';
       }
+      saveJournalDraftToStorage();
     }
   }
 
@@ -2182,6 +2219,7 @@ ${existingStr}
         btn.disabled = false;
         btn.textContent = '生成主題';
       }
+      saveJournalDraftToStorage();
     }
   }
 
@@ -2206,6 +2244,234 @@ ${existingStr}
     }
   }
 
+  function saveJournalDraftToStorage() {
+    const titleInput = document.getElementById('journal-title-input');
+    const editor = document.getElementById('journal-input');
+    const activeAuthorBtn = document.querySelector('.author-btn.active');
+    
+    const title = titleInput ? titleInput.value : '';
+    const content = getJournalDraftText();
+    
+    if (!title.trim() && !content.trim() && journalDraftKeywords.length === 0 && journalDraftImages.length === 0) {
+      localStorage.removeItem('habit-snowball-journal-draft');
+      return;
+    }
+
+    const draft = {
+      editingJournalEntryId: editingJournalEntryId,
+      title: title,
+      content: content,
+      keywords: journalDraftKeywords || [],
+      images: journalDraftImages || [],
+      author: activeAuthorBtn ? activeAuthorBtn.dataset.author : '小葦',
+      date: getSelectedJournalDate() ? getSelectedJournalDate().toISOString() : new Date().toISOString()
+    };
+    
+    try {
+      localStorage.setItem('habit-snowball-journal-draft', JSON.stringify(draft));
+    } catch (e) {
+      console.warn('Failed to save draft to localStorage:', e);
+    }
+  }
+
+  function restoreJournalDraft(draft) {
+    if (!draft) return;
+    
+    editingJournalEntryId = draft.editingJournalEntryId;
+    if (draft.date) {
+      setSelectedJournalDate(new Date(draft.date));
+    }
+    
+    const titleInput = document.getElementById('journal-title-input');
+    const editor = document.getElementById('journal-input');
+    
+    if (titleInput) titleInput.value = draft.title || '';
+    if (editor) {
+      editor.innerHTML = markdownToHtml(draft.content || '');
+    }
+    
+    journalKeywordsTouched = true;
+    blockedJournalKeywords = new Set();
+    journalDraftKeywords = draft.keywords || [];
+    updateJournalKeywordPanel(journalDraftKeywords);
+    
+    // Restore images
+    journalDraftImages = draft.images || [];
+    renderJournalImageGrid();
+    
+    const currentAuthor = draft.author || '小葦';
+    document.querySelectorAll('.author-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.author === currentAuthor);
+    });
+    
+    syncJournalTitleHint();
+    syncJournalEditingState();
+  }
+
+  function compressImageToDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      const objectUrl = URL.createObjectURL(file);
+      img.src = objectUrl;
+      img.onload = () => {
+        URL.revokeObjectURL(objectUrl);
+        const canvas = document.createElement('canvas');
+        let width = img.width;
+        let height = img.height;
+        const MAX_LEN = 1200;
+        if (width > MAX_LEN || height > MAX_LEN) {
+          if (width > height) {
+            height = Math.round(height * MAX_LEN / width);
+            width = MAX_LEN;
+          } else {
+            width = Math.round(width * MAX_LEN / height);
+            height = MAX_LEN;
+          }
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+
+        let quality = 0.9;
+        let dataUrl = canvas.toDataURL('image/jpeg', quality);
+        while (dataUrl.length * 0.75 > 300 * 1024 && quality > 0.1) {
+          quality -= 0.1;
+          dataUrl = canvas.toDataURL('image/jpeg', quality);
+        }
+        resolve(dataUrl);
+      };
+      img.onerror = (e) => {
+        URL.revokeObjectURL(objectUrl);
+        reject(e);
+      };
+    });
+  }
+
+  function renderJournalImageGrid() {
+    const grid = document.getElementById('journal-image-grid');
+    if (!grid) return;
+    grid.innerHTML = journalDraftImages.map(img => `
+      <div class="journal-image-item">
+        <img src="${img.url}" onclick="App.openImageDetail('${img.id}')" />
+        <button type="button" class="journal-image-item-delete" onclick="App.deleteJournalImageDraft('${img.id}', event)">&times;</button>
+      </div>
+    `).join('');
+  }
+
+  async function handleJournalImageUpload(e) {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    if (journalDraftImages.length + files.length > 15) {
+      Animations.toast('最多只能上傳 15 張圖片', 'warning');
+      e.target.value = '';
+      return;
+    }
+
+    Animations.toast('圖片壓縮處理中...', 'info');
+    try {
+      for (const file of files) {
+        const dataUrl = await compressImageToDataUrl(file);
+        journalDraftImages.push({
+          id: Storage.generateId(),
+          url: dataUrl,
+          caption: ''
+        });
+      }
+      renderJournalImageGrid();
+      saveJournalDraftToStorage();
+      Animations.toast('圖片上傳完成', 'success');
+    } catch (err) {
+      console.error('Image compression failed:', err);
+      Animations.toast('部分圖片處理失敗', 'danger');
+    }
+    e.target.value = '';
+  }
+
+  function openImageDetail(id) {
+    activeImageDetailId = id;
+    const img = journalDraftImages.find(item => item.id === id);
+    if (!img) return;
+
+    const preview = document.getElementById('image-detail-preview');
+    const captionInput = document.getElementById('image-detail-caption');
+    if (preview) preview.src = img.url;
+    if (captionInput) captionInput.value = img.caption || '';
+
+    document.getElementById('image-detail-modal')?.classList.add('active');
+  }
+
+  function saveImageDetail() {
+    if (!activeImageDetailId) return;
+    const captionInput = document.getElementById('image-detail-caption');
+    const img = journalDraftImages.find(item => item.id === activeImageDetailId);
+    if (img && captionInput) {
+      img.caption = captionInput.value.trim();
+    }
+    renderJournalImageGrid();
+    saveJournalDraftToStorage();
+    document.getElementById('image-detail-modal')?.classList.remove('active');
+    activeImageDetailId = null;
+  }
+
+  async function handleImageReplace(e) {
+    const file = e.target.files?.[0];
+    if (!file || !activeImageDetailId) return;
+
+    Animations.toast('新圖片處理中...', 'info');
+    try {
+      const dataUrl = await compressImageToDataUrl(file);
+      const img = journalDraftImages.find(item => item.id === activeImageDetailId);
+      if (img) {
+        img.url = dataUrl;
+        const preview = document.getElementById('image-detail-preview');
+        if (preview) preview.src = dataUrl;
+      }
+      renderJournalImageGrid();
+      saveJournalDraftToStorage();
+      Animations.toast('替換圖片成功', 'success');
+    } catch (err) {
+      console.error('Image replace failed:', err);
+      Animations.toast('圖片替換失敗', 'danger');
+    }
+    e.target.value = '';
+  }
+
+  function deleteActiveImageDetail() {
+    if (!activeImageDetailId) return;
+    journalDraftImages = journalDraftImages.filter(item => item.id !== activeImageDetailId);
+    renderJournalImageGrid();
+    saveJournalDraftToStorage();
+    document.getElementById('image-detail-modal')?.classList.remove('active');
+    activeImageDetailId = null;
+    Animations.toast('圖片已刪除', 'success');
+  }
+
+  function deleteJournalImageDraft(id, event) {
+    if (event) event.stopPropagation();
+    journalDraftImages = journalDraftImages.filter(item => item.id !== id);
+    renderJournalImageGrid();
+    saveJournalDraftToStorage();
+    Animations.toast('圖片已刪除', 'success');
+  }
+
+  function zoomJournalImageOnly(url, caption) {
+    const zoomImg = document.getElementById('image-zoom-img');
+    const zoomCaption = document.getElementById('image-zoom-caption');
+    if (zoomImg) zoomImg.src = url;
+    if (zoomCaption) {
+      if (caption) {
+        zoomCaption.textContent = caption;
+        zoomCaption.style.display = 'block';
+      } else {
+        zoomCaption.textContent = '';
+        zoomCaption.style.display = 'none';
+      }
+    }
+    document.getElementById('image-zoom-modal')?.classList.add('active');
+  }
+
   function clearJournalDraft() {
     const titleInput = document.getElementById('journal-title-input');
     const editor = document.getElementById('journal-input');
@@ -2220,9 +2486,17 @@ ${existingStr}
     document.querySelectorAll('.author-btn').forEach(btn => {
       btn.classList.toggle('active', btn.dataset.author === lastAuthor);
     });
+    
+    // Clear images
+    journalDraftImages = [];
+    renderJournalImageGrid();
+    
     syncJournalTitleHint();
     syncJournalEditingState();
     hideJournalComposer();
+    
+    // Clear localStorage draft
+    localStorage.removeItem('habit-snowball-journal-draft');
   }
 
   function saveJournalEntry() {
@@ -2250,6 +2524,7 @@ ${existingStr}
         content,
         polishedContent,
         keywords,
+        images: journalDraftImages,
         author: selectedAuthor,
         createdAt: entryDate.toISOString()
       });
@@ -2259,6 +2534,7 @@ ${existingStr}
         content,
         polishedContent,
         keywords,
+        images: journalDraftImages,
         author: selectedAuthor,
         createdAt: entryDate.toISOString()
       });
@@ -2274,22 +2550,44 @@ ${existingStr}
     const entry = Storage.getJournalEntries().find(item => item.id === entryId);
     if (!entry) return;
 
-    editingJournalEntryId = entry.id;
-    setSelectedJournalDate(entry.createdAt);
+    let restored = false;
+    try {
+      const saved = localStorage.getItem('habit-snowball-journal-draft');
+      if (saved) {
+        const draft = JSON.parse(saved);
+        if (draft.editingJournalEntryId === entryId) {
+          restoreJournalDraft(draft);
+          restored = true;
+        }
+      }
+    } catch (e) {
+      console.error('Failed to restore edit draft:', e);
+    }
 
-    const titleInput = document.getElementById('journal-title-input');
-    const editor = document.getElementById('journal-input');
-    if (titleInput) titleInput.value = entry.title || '';
-    if (editor) editor.innerHTML = markdownToHtml(entry.content || entry.polishedContent || '');
-    journalKeywordsTouched = false;
-    blockedJournalKeywords = new Set();
-    updateJournalKeywordPanel(Array.isArray(entry.keywords) ? entry.keywords : []);
-    const currentAuthor = entry.author || '小葦';
-    document.querySelectorAll('.author-btn').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.author === currentAuthor);
-    });
-    syncJournalTitleHint();
-    syncJournalEditingState();
+    if (!restored) {
+      editingJournalEntryId = entry.id;
+      setSelectedJournalDate(entry.createdAt);
+
+      const titleInput = document.getElementById('journal-title-input');
+      const editor = document.getElementById('journal-input');
+      if (titleInput) titleInput.value = entry.title || '';
+      if (editor) editor.innerHTML = markdownToHtml(entry.content || entry.polishedContent || '');
+      journalKeywordsTouched = false;
+      blockedJournalKeywords = new Set();
+      updateJournalKeywordPanel(Array.isArray(entry.keywords) ? entry.keywords : []);
+      
+      // Load images
+      journalDraftImages = Array.isArray(entry.images) ? JSON.parse(JSON.stringify(entry.images)) : [];
+      renderJournalImageGrid();
+
+      const currentAuthor = entry.author || '小葦';
+      document.querySelectorAll('.author-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.author === currentAuthor);
+      });
+      syncJournalTitleHint();
+      syncJournalEditingState();
+    }
+
     switchView('journal');
     showJournalComposer();
     var journalInput = document.getElementById('journal-input');
@@ -3130,6 +3428,7 @@ ${existingStr}
       });
       resetJournalVisibleCount();
       renderAll();
+      saveJournalDraftToStorage();
     }
 
     document.querySelectorAll('.author-btn').forEach(btn => {
@@ -3180,13 +3479,49 @@ ${existingStr}
     }
 
     addEvent('btn-open-composer', 'click', () => {
-      clearJournalDraft();
+      let restored = false;
+      try {
+        const saved = localStorage.getItem('habit-snowball-journal-draft');
+        if (saved) {
+          const draft = JSON.parse(saved);
+          if (!draft.editingJournalEntryId && (draft.title.trim() || draft.content.trim() || draft.keywords.length > 0 || (draft.images && draft.images.length > 0))) {
+            restoreJournalDraft(draft);
+            restored = true;
+          }
+        }
+      } catch (e) {
+        console.error('Failed to restore draft:', e);
+      }
+      
+      if (!restored) {
+        clearJournalDraft();
+      }
       showJournalComposer();
     });
     addEvent('btn-close-composer', 'click', hideJournalComposer);
     addEvent('journal-composer-modal', 'click', e => {
       if (e.target.id === 'journal-composer-modal') hideJournalComposer();
     });
+
+    // Auto save draft on any input or change inside the modal
+    addEvent('journal-composer-modal', 'input', () => {
+      saveJournalDraftToStorage();
+    });
+    addEvent('journal-composer-modal', 'change', () => {
+      saveJournalDraftToStorage();
+    });
+
+    // Image upload events
+    addEvent('btn-journal-upload-image', 'click', () => {
+      document.getElementById('journal-image-input')?.click();
+    });
+    addEvent('journal-image-input', 'change', handleJournalImageUpload);
+    addEvent('btn-image-detail-replace', 'click', () => {
+      document.getElementById('image-detail-replace-input')?.click();
+    });
+    addEvent('image-detail-replace-input', 'change', handleImageReplace);
+    addEvent('btn-image-detail-delete', 'click', deleteActiveImageDetail);
+    addEvent('btn-image-detail-save', 'click', saveImageDetail);
 
     addEvent('btn-save-google-api-key', 'click', handleSaveGoogleApiKey);
     addEvent('btn-toggle-google-api-key', 'click', handleToggleGoogleApiKeyVisibility);
@@ -3252,7 +3587,10 @@ ${existingStr}
     showJournalComposer,
     hideJournalComposer,
     removeJournalKeyword,
-    addJournalKeyword
+    addJournalKeyword,
+    openImageDetail,
+    deleteJournalImageDraft,
+    zoomJournalImageOnly
   };
 })();
 
