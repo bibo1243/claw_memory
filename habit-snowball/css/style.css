@@ -1207,12 +1207,12 @@ body::before {
   font-size: 14px;
   color: var(--text-secondary);
   line-height: 1.8;
-  transition: max-height var(--transition-normal), opacity var(--transition-normal);
+  transition: opacity var(--transition-normal);
+  overflow: hidden; /* Keep overflow hidden at all times to prevent content bleed and layout bugs */
 }
 
 .journal-entry-body.collapsed {
   max-height: 112px;
-  overflow: hidden;
   position: relative;
 }
 
@@ -1228,7 +1228,7 @@ body::before {
 }
 
 .journal-entry-body.expanded {
-  max-height: 4000px;
+  max-height: none;
 }
 
 .journal-entry-body p {
