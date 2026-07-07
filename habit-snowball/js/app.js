@@ -485,42 +485,19 @@ const App = (() => {
     updateJournalAiMode();
 
     try {
-      const res = await fetch('/api/ollama-tunnel');
+      const res = await fetch('/api/ollama-status');
       if (res.ok) {
         const payload = await res.json();
-        ollamaTunnelUrl = payload.tunnelUrl ? payload.tunnelUrl.trim() : '';
-      }
-    } catch (e) {
-      console.error('Failed to fetch Ollama tunnel URL:', e);
-    }
-
-    if (!ollamaTunnelUrl) {
-      console.log('No Ollama tunnel URL configured in database.');
-      ollamaStatus = 'disconnected';
-      updateJournalAiMode();
-      return;
-    }
-
-    try {
-      console.log(`Checking if Ollama is reachable at tunnel: ${ollamaTunnelUrl}...`);
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), OLLAMA_TUNNEL_TIMEOUT_MS);
-      const testRes = await fetch(ollamaTunnelUrl, {
-        signal: controller.signal,
-        headers: { 'Accept': 'text/plain' }
-      });
-      clearTimeout(timeoutId);
-      if (testRes.ok) {
-        const text = await testRes.text();
-        if (text.includes('Ollama')) {
-          console.log(`Ollama is reachable at tunnel: ${ollamaTunnelUrl}`);
+        if (payload.connected) {
+          console.log(`Ollama is reachable via proxy: ${payload.tunnelUrl}`);
+          ollamaTunnelUrl = payload.tunnelUrl;
           ollamaStatus = 'connected';
           updateJournalAiMode();
           return;
         }
       }
     } catch (e) {
-      console.warn(`Ollama tunnel check failed: ${ollamaTunnelUrl}`, e);
+      console.error('Failed to check Ollama status via proxy:', e);
     }
 
     ollamaStatus = 'disconnected';
@@ -674,34 +651,21 @@ const App = (() => {
     let useOllama = false;
     let targetOllamaUrl = ollamaTunnelUrl;
 
-    if (ollamaStatus === 'connected' && targetOllamaUrl) {
+    if (ollamaStatus === 'connected') {
       useOllama = true;
     } else {
       // Lazy synchronization check if not connected, in case the tunnel URL was just updated
       try {
         console.log('Ollama not connected. Performing lazy check for updated tunnel...');
-        const res = await fetch('/api/ollama-tunnel');
+        const res = await fetch('/api/ollama-status');
         if (res.ok) {
           const payload = await res.json();
-          const freshUrl = payload.tunnelUrl ? payload.tunnelUrl.trim() : '';
-          if (freshUrl) {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), OLLAMA_TUNNEL_TIMEOUT_MS);
-            const testRes = await fetch(freshUrl, {
-              signal: controller.signal,
-              headers: { 'Accept': 'text/plain' }
-            });
-            clearTimeout(timeoutId);
-            if (testRes.ok) {
-              const text = await testRes.text();
-              if (text.includes('Ollama')) {
-                useOllama = true;
-                targetOllamaUrl = freshUrl;
-                ollamaTunnelUrl = freshUrl;
-                ollamaStatus = 'connected';
-                updateJournalAiMode();
-              }
-            }
+          if (payload.connected) {
+            useOllama = true;
+            targetOllamaUrl = payload.tunnelUrl;
+            ollamaTunnelUrl = payload.tunnelUrl;
+            ollamaStatus = 'connected';
+            updateJournalAiMode();
           }
         }
       } catch (e) {
@@ -709,9 +673,8 @@ const App = (() => {
       }
     }
 
-    if (useOllama && targetOllamaUrl) {
+    if (useOllama) {
       try {
-        const cleanUrl = targetOllamaUrl.replace(/\/$/, '');
         let response = null;
         let lastOllamaError = null;
         for (const model of ['gemma4:e2b', 'gemma4:e4b']) {
@@ -724,14 +687,14 @@ const App = (() => {
                 model: model
               });
             }
-            console.log(`Connecting to local Ollama via Tunnel: ${targetOllamaUrl}, trying model: ${model}`);
+            console.log(`Connecting to local Ollama via Proxy, trying model: ${model}`);
             const modelController = new AbortController();
             modelTimeoutId = setTimeout(() => {
               console.warn(`Ollama request for model ${model} timed out after 90 seconds. Aborting...`);
               modelController.abort();
             }, 90000);
 
-            const res = await fetch(`${cleanUrl}/api/chat`, {
+            const res = await fetch('/api/ollama-chat', {
               method: 'POST',
               signal: modelController.signal,
               headers: {

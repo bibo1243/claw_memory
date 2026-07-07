@@ -443,6 +443,88 @@ app.post("/api/ollama-tunnel", async (req, res) => {
   }
 });
 
+app.get("/api/ollama-status", async (req, res) => {
+  try {
+    const [rows] = await getPool().query(
+      "SELECT payload FROM user_states WHERE user_key = 'ollama_tunnel' LIMIT 1"
+    );
+    if (!rows.length) {
+      return res.json({ connected: false, reason: "no_tunnel_configured" });
+    }
+    const tunnelUrl = rows[0].payload.tunnelUrl ? rows[0].payload.tunnelUrl.trim() : "";
+    if (!tunnelUrl) {
+      return res.json({ connected: false, reason: "empty_tunnel_url" });
+    }
+
+    // Test connection with 5 seconds timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    try {
+      const testRes = await fetch(tunnelUrl, {
+        signal: controller.signal,
+        headers: { "Accept": "text/plain" }
+      });
+      clearTimeout(timeoutId);
+      if (testRes.ok) {
+        const text = await testRes.text();
+        if (text.includes("Ollama")) {
+          return res.json({ connected: true, tunnelUrl });
+        }
+      }
+      res.json({ connected: false, reason: `status_${testRes.status}` });
+    } catch (err) {
+      clearTimeout(timeoutId);
+      res.json({ connected: false, error: err.message });
+    }
+  } catch (error) {
+    console.error("Failed to check ollama-status:", error);
+    res.status(500).json({ error: "db_error" });
+  }
+});
+
+app.post("/api/ollama-chat", async (req, res) => {
+  try {
+    const [rows] = await getPool().query(
+      "SELECT payload FROM user_states WHERE user_key = 'ollama_tunnel' LIMIT 1"
+    );
+    if (!rows.length) {
+      return res.status(503).json({ error: "no_tunnel_configured" });
+    }
+    const tunnelUrl = rows[0].payload.tunnelUrl ? rows[0].payload.tunnelUrl.trim() : "";
+    if (!tunnelUrl) {
+      return res.status(503).json({ error: "empty_tunnel_url" });
+    }
+
+    const cleanUrl = tunnelUrl.replace(/\/$/, "");
+    const targetUrl = `${cleanUrl}/api/chat`;
+
+    // Forward the POST request to the tunnel
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 seconds timeout for inference
+    try {
+      const chatRes = await fetch(targetUrl, {
+        method: "POST",
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(req.body)
+      });
+      clearTimeout(timeoutId);
+      
+      const data = await chatRes.json();
+      res.status(chatRes.status).json(data);
+    } catch (err) {
+      clearTimeout(timeoutId);
+      console.error("Ollama proxy request failed:", err);
+      res.status(500).json({ error: "proxy_failed", message: err.message });
+    }
+  } catch (error) {
+    console.error("Failed to proxy ollama-chat:", error);
+    res.status(500).json({ error: "server_error" });
+  }
+});
+
 app.get("*", (_req, res) => {
   res.sendFile(path.join(staticDir, "index.html"));
 });

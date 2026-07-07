@@ -359,7 +359,7 @@ const Storage = (() => {
     });
     
     const mergedJournals = Array.from(journalsMap.values())
-      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+      .sort(compareJournalEntries);
 
     const totalPoints = mergedRecords.reduce((sum, r) => sum + (r.points || 0), 0);
     const totalResisted = mergedRecords.filter(r => r.action === 'resisted').length;
@@ -763,10 +763,26 @@ const Storage = (() => {
     save(data);
   }
 
+  function compareJournalEntries(a, b) {
+    const dateA = new Date(a.createdAt || 0);
+    const dateB = new Date(b.createdAt || 0);
+    
+    const dayA = new Date(dateA.getFullYear(), dateA.getMonth(), dateA.getDate()).getTime();
+    const dayB = new Date(dateB.getFullYear(), dateB.getMonth(), dateB.getDate()).getTime();
+    
+    if (dayB !== dayA) {
+      return dayB - dayA;
+    }
+    
+    const timeA = new Date(a.updatedAt || a.createdAt || 0).getTime();
+    const timeB = new Date(b.updatedAt || b.createdAt || 0).getTime();
+    return timeB - timeA;
+  }
+
   function getJournalEntries() {
     const data = load();
     const filtered = filterByActiveAuthor(data.journalEntries, true);
-    return [...filtered].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+    return [...filtered].sort(compareJournalEntries);
   }
 
   return {
