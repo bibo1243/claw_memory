@@ -8,7 +8,7 @@ app.use(compression());
 const port = Number(process.env.PORT || 8080);
 const staticDir = __dirname;
 
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "50mb" }));
 app.use(express.static(staticDir));
 
 let pool;

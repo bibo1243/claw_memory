@@ -44,7 +44,7 @@ const App = (() => {
     '1.1': '大字',
     '1.2': '特大'
   };
-  const OLLAMA_TUNNEL_TIMEOUT_MS = 3000;
+  const OLLAMA_TUNNEL_TIMEOUT_MS = 10000;
   const GOOGLE_GEMINI_MODEL = 'gemini-2.5-flash';
   const KEYWORD_STOP_WORDS = new Set([
     '今天', '自己', '一個', '一些', '因為', '所以', '如果', '但是', '然後',
