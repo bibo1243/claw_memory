@@ -1034,6 +1034,9 @@ ${existingStr}
   async function init() {
     applyTextScale(getSavedTextScale(), { skipLayoutRefresh: true });
 
+    // Initialize Storage database first (loads from IndexedDB)
+    await Storage.initDb();
+
     var loginIdentity = localStorage.getItem('login-identity');
     if (!loginIdentity) {
       var overlay = document.getElementById('identity-picker-overlay');

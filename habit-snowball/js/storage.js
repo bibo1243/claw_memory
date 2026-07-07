@@ -35,24 +35,110 @@ const Storage = (() => {
     return Date.now().toString(36) + Math.random().toString(36).substring(2, 9);
   }
 
-  // ---------- Local Storage Helpers ----------
+  // ---------- IndexedDB / Local Storage Helpers ----------
 
-  function loadLocal() {
+  const DB_NAME = 'HabitSnowballDB';
+  const DB_VERSION = 1;
+  const STORE_NAME = 'states';
+  const KEY_NAME = 'current_state';
+
+  let localCache = null;
+
+  function initDb() {
+    return new Promise((resolve) => {
+      if (localCache) {
+        resolve(localCache);
+        return;
+      }
+      
+      try {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        
+        request.onupgradeneeded = (event) => {
+          const db = event.target.result;
+          if (!db.objectStoreNames.contains(STORE_NAME)) {
+            db.createObjectStore(STORE_NAME);
+          }
+        };
+        
+        request.onsuccess = (event) => {
+          const db = event.target.result;
+          const transaction = db.transaction(STORE_NAME, 'readonly');
+          const store = transaction.objectStore(STORE_NAME);
+          const getReq = store.get(KEY_NAME);
+          
+          getReq.onsuccess = () => {
+            if (getReq.result) {
+              localCache = getReq.result;
+              console.log('IndexedDB loaded successfully.');
+              resolve(localCache);
+            } else {
+              // Fallback to localStorage if IndexedDB is empty
+              const raw = localStorage.getItem(STORAGE_KEY);
+              if (raw) {
+                try {
+                  localCache = JSON.parse(raw);
+                  console.log('Migrated data from localStorage to IndexedDB.');
+                  saveDb(localCache);
+                } catch (e) {
+                  localCache = getDefaultData();
+                }
+              } else {
+                localCache = getDefaultData();
+              }
+              resolve(localCache);
+            }
+          };
+          
+          getReq.onerror = () => {
+            localCache = fallbackToLocalStorage();
+            resolve(localCache);
+          };
+        };
+        
+        request.onerror = () => {
+          localCache = fallbackToLocalStorage();
+          resolve(localCache);
+        };
+      } catch (err) {
+        console.error('Failed to open IndexedDB:', err);
+        localCache = fallbackToLocalStorage();
+        resolve(localCache);
+      }
+    });
+  }
+
+  function fallbackToLocalStorage() {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      try {
+        return JSON.parse(raw);
+      } catch (e) {
+        return getDefaultData();
+      }
+    }
+    return getDefaultData();
+  }
+
+  function saveDb(data) {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return getDefaultData();
-      const data = JSON.parse(raw);
-      return {
-        ...getDefaultData(),
-        ...data,
-        journalEntries: Array.isArray(data.journalEntries) ? data.journalEntries : [],
-        stats: { ...getDefaultData().stats, ...(data.stats || {}) },
-        settings: { ...getDefaultData().settings, ...(data.settings || {}) }
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      request.onsuccess = (event) => {
+        const db = event.target.result;
+        const transaction = db.transaction(STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        store.put(data, KEY_NAME);
       };
     } catch (e) {
-      console.error('Failed to load local data:', e);
-      return getDefaultData();
+      console.error('Failed to save to IndexedDB:', e);
     }
+  }
+
+  function loadLocal() {
+    if (!localCache) {
+      return fallbackToLocalStorage();
+    }
+    return localCache;
   }
 
   function saveLocal(data, keepTimestamp = false) {
@@ -60,9 +146,20 @@ const Storage = (() => {
       if (!keepTimestamp) {
         data.lastModified = new Date().toISOString();
       }
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      localCache = data;
+      saveDb(data);
+
+      // Save a lightweight copy in localStorage (without large images) as backup
+      const lightweightData = {
+        ...data,
+        journalEntries: (data.journalEntries || []).map(entry => ({
+          ...entry,
+          images: []
+        }))
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(lightweightData));
     } catch (e) {
-      console.error('Failed to save local data:', e);
+      // Ignore quota errors for localStorage backup
     }
   }
 
@@ -681,6 +778,18 @@ const Storage = (() => {
 
   function clearAllData() {
     localStorage.removeItem(STORAGE_KEY);
+    localCache = getDefaultData();
+    try {
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+      request.onsuccess = (event) => {
+        const db = event.target.result;
+        const transaction = db.transaction(STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        store.delete(KEY_NAME);
+      };
+    } catch (e) {
+      console.error('Failed to clear IndexedDB:', e);
+    }
     fetch(getApiBase(), { method: 'DELETE' }).catch(err => {
       console.error('Failed to delete remote data:', err);
     });
@@ -786,6 +895,7 @@ const Storage = (() => {
   }
 
   return {
+    initDb,
     load,
     save,
     replaceData,

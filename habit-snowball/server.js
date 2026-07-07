@@ -252,6 +252,12 @@ function mergeJournalEntry(existingEntry, incomingEntry, existingPayloadUpdatedA
   base.id = existingEntry.id || incomingEntry.id;
   base.author = existingEntry.author || incomingEntry.author || "小葦";
   base.createdAt = existingEntry.createdAt || incomingEntry.createdAt || new Date().toISOString();
+  
+  const existingTime = getTimestampValue(existingEntry.updatedAt || existingEntry.createdAt);
+  const incomingTime = getTimestampValue(incomingEntry.updatedAt || incomingEntry.createdAt);
+  base.updatedAt = incomingTime >= existingTime
+    ? (incomingEntry.updatedAt || new Date().toISOString())
+    : (existingEntry.updatedAt || new Date().toISOString());
   base.title = existingScore >= incomingScore
     ? (existingEntry.title || incomingEntry.title || "")
     : (incomingEntry.title || existingEntry.title || "");
