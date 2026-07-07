@@ -1834,7 +1834,7 @@ body.light-theme #author-flower.active {
   border-radius: 0 0 28px 28px;
   margin: 0 -4px 18px;
   box-shadow: var(--header-shadow);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .app-header::before {
@@ -1843,6 +1843,7 @@ body.light-theme #author-flower.active {
   inset: 0;
   background: var(--header-ornament);
   pointer-events: none;
+  border-radius: 0 0 28px 28px;
 }
 
 .app-header > * {
