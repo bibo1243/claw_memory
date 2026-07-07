@@ -2069,6 +2069,10 @@ ${existingStr}
     if (filterCountDot) filterCountDot.style.display = isFiltered ? 'block' : 'none';
   }
 
+  function syncJournalTitleHint() {
+    return;
+  }
+
   function syncJournalEditingState() {
     const banner = document.getElementById('journal-edit-banner');
     const label = document.getElementById('journal-edit-label');
