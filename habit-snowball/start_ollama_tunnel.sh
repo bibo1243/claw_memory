@@ -16,9 +16,9 @@ if ! lsof -i :11436 >/dev/null 2>&1; then
     sleep 2
 fi
 
-# 4. 啟動 Cloudflare 隧道指向 Python 代理 (11436)
+# 4. 啟動 Cloudflare 隧道指向 Python 代理 (11436) 並強制作為 http2 (TCP) 傳輸協議以提升連線穩定度
 echo "Starting Cloudflare Tunnel..."
-nohup ~/cloudflared tunnel --url http://127.0.0.1:11436 > ~/tunnel.log 2>&1 &
+nohup ~/cloudflared tunnel --protocol http2 --url http://127.0.0.1:11436 > ~/tunnel.log 2>&1 &
 
 # 5. 迴圈等待並解析隨機分配的 trycloudflare.com HTTPS 網址 (最長等待 30 秒)
 TUNNEL_URL=""
@@ -39,18 +39,38 @@ if [ ! -z "$TUNNEL_URL" ]; then
     SYNC_RES=$(curl -s --max-time 10 -X POST -H "Content-Type: application/json" -d "{\"tunnelUrl\": \"$TUNNEL_URL\"}" https://habit-snowball.zeabur.app/api/ollama-tunnel)
     echo "Sync response: $SYNC_RES"
 
-    # 7. 持續監控背景服務是否存活，如有任一服務掛掉則以 exit 1 退出，供 launchd 自動重啟
-    echo "Monitoring background services..."
+    # 7. 持續監控背景服務是否存活與健康
+    echo "Waiting 60 seconds for DNS propagation..."
+    sleep 60
+    echo "Monitoring background services and tunnel health..."
+    FAIL_COUNT=0
     while true; do
+        # 檢查 Python CORS 代理是否存活
         if ! lsof -i :11436 >/dev/null 2>&1; then
             echo "Error: Python CORS proxy died."
             exit 1
         fi
+        
+        # 檢查 cloudflared 進程是否存活
         if ! pgrep -f "cloudflared tunnel" > /dev/null; then
-            echo "Error: Cloudflare Tunnel died."
+            echo "Error: Cloudflare Tunnel process died."
             exit 1
         fi
-        sleep 10
+        
+        # 測試隧道網址是否健康 (curl 超時 10 秒)
+        # 本地 AI 健康檢查回應應該包含 "Ollama"
+        if ! curl -s --max-time 10 "$TUNNEL_URL" | grep -q "Ollama"; then
+            let FAIL_COUNT=FAIL_COUNT+1
+            echo "Warning: Tunnel health check failed ($FAIL_COUNT/5)."
+            if [ $FAIL_COUNT -ge 5 ]; then
+                echo "Error: Tunnel connection failed 5 consecutive times. Exiting to restart."
+                exit 1
+            fi
+        else
+            FAIL_COUNT=0
+        fi
+        
+        sleep 30
     done
 else
     echo "Error: Failed to obtain Cloudflare Tunnel URL within 30 seconds."
