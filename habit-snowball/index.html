@@ -178,8 +178,8 @@
           <span>日精進</span>
         </h1>
         <div class="header-actions">
-          <!-- 全域填寫人切換器 (支援多選) -->
-          <div class="global-author-toggle">
+          <!-- 全域填寫人切換器 (支援多選，已隱藏並整合至搜尋列) -->
+          <div class="global-author-toggle" style="display: none;">
             <div class="g-author-wrapper">
               <button type="button" class="g-author-btn active" data-author="小葦" id="btn-toggle-author-wei">
                 <span>👦🏻</span>
@@ -208,6 +208,25 @@
       </div>
       <div class="search-bar-wrapper">
         <input type="text" id="journal-search-input" class="search-input" placeholder="搜尋標題、內容或關鍵字..." autocomplete="off">
+        <button type="button" class="search-author-filter-btn" id="btn-search-author-filter" title="篩選填寫人">
+          👥<span class="filter-count-dot" id="search-filter-active-count" style="display: none;"></span>
+        </button>
+        <!-- 填寫人篩選下拉選單 -->
+        <div class="search-author-dropdown" id="search-author-dropdown" style="display: none;">
+          <div class="search-author-dropdown-title">篩選填寫人</div>
+          <div class="search-author-option active" data-author="小葦" id="search-author-opt-wei">
+            <span class="option-check">✓</span>
+            <span class="option-avatar">👦🏻</span>
+            <span class="option-name">小葦</span>
+            <span class="option-badge" id="search-badge-wei" style="display: none;">0</span>
+          </div>
+          <div class="search-author-option active" data-author="小花" id="search-author-opt-flower">
+            <span class="option-check">✓</span>
+            <span class="option-avatar">👩🏻</span>
+            <span class="option-name">小花</span>
+            <span class="option-badge" id="search-badge-flower" style="display: none;">0</span>
+          </div>
+        </div>
         <div id="search-keyword-suggestions" class="keyword-dropdown" style="display: none; position: absolute; top: 100%; left: 0; right: 0; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); z-index: 100; max-height: 200px; overflow-y: auto; margin-top: 4px; box-shadow: var(--shadow-card);"></div>
       </div>
     </header>

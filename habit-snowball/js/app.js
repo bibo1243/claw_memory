@@ -1510,6 +1510,7 @@ ${existingStr}
     const listEl = document.getElementById('journal-list');
     const loadMoreEl = document.getElementById('journal-pagination');
     if (!currentDateEl || !currentDayEl || !listEl) return;
+    syncSearchAuthorFilterUI();
 
     const entries = Storage.getJournalEntries();
     const allEntries = Storage.load().journalEntries || [];
@@ -2054,8 +2055,18 @@ ${existingStr}
     return normalizeEditorText(htmlToMarkdown((editor ? editor.innerHTML : '') || ''));
   }
 
-  function syncJournalTitleHint() {
-    return;
+  function syncSearchAuthorFilterUI() {
+    const active = Storage.getActiveAuthors();
+    const optWei = document.getElementById('search-author-opt-wei');
+    const optFlower = document.getElementById('search-author-opt-flower');
+    if (optWei) optWei.classList.toggle('active', active.includes('小葦'));
+    if (optFlower) optFlower.classList.toggle('active', active.includes('小花'));
+
+    const filterBtn = document.getElementById('btn-search-author-filter');
+    const filterCountDot = document.getElementById('search-filter-active-count');
+    const isFiltered = active.length < 2;
+    if (filterBtn) filterBtn.classList.toggle('active', isFiltered);
+    if (filterCountDot) filterCountDot.style.display = isFiltered ? 'block' : 'none';
   }
 
   function syncJournalEditingState() {
@@ -2728,6 +2739,28 @@ ${existingStr}
         badgeFlower.style.display = 'none';
       }
     }
+
+    // 同步更新搜尋欄作者篩選選單內的未讀通知 Badge
+    var searchBadgeWei = document.getElementById('search-badge-wei');
+    var searchBadgeFlower = document.getElementById('search-badge-flower');
+
+    if (searchBadgeWei) {
+      if (unreadCounts['小葦'] > 0) {
+        searchBadgeWei.textContent = unreadCounts['小葦'];
+        searchBadgeWei.style.display = 'inline-block';
+      } else {
+        searchBadgeWei.style.display = 'none';
+      }
+    }
+
+    if (searchBadgeFlower) {
+      if (unreadCounts['小花'] > 0) {
+        searchBadgeFlower.textContent = unreadCounts['小花'];
+        searchBadgeFlower.style.display = 'inline-block';
+      } else {
+        searchBadgeFlower.style.display = 'none';
+      }
+    }
   }
 
   function deleteJournalEntry(entryId) {
@@ -3173,14 +3206,16 @@ ${existingStr}
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
-  function handleGlobalAuthorToggle(e) {
-    const btn = e.currentTarget;
-    if (!btn) return;
-    const author = btn.dataset.author;
+  function toggleActiveAuthor(author) {
     let active = Storage.getActiveAuthors();
 
     if (active.includes(author)) {
-      active = active.filter(a => a !== author);
+      if (active.length > 1) {
+        active = active.filter(a => a !== author);
+      } else {
+        Animations.toast('必須至少選擇一位填寫人', 'warning');
+        return;
+      }
     } else {
       active.push(author);
     }
@@ -3193,6 +3228,12 @@ ${existingStr}
 
     resetJournalVisibleCount();
     renderAll();
+  }
+
+  function handleGlobalAuthorToggle(e) {
+    const btn = e.currentTarget;
+    if (!btn) return;
+    toggleActiveAuthor(btn.dataset.author);
   }
 
   function handleSaveGoogleApiKey() {
@@ -3496,6 +3537,33 @@ ${existingStr}
           searchSuggestions.style.display = 'block';
         }
       });
+
+      // 填寫人篩選下拉選單事件綁定
+      const authorFilterBtn = document.getElementById('btn-search-author-filter');
+      const authorDropdown = document.getElementById('search-author-dropdown');
+      if (authorFilterBtn && authorDropdown) {
+        authorFilterBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const isHidden = authorDropdown.style.display === 'none';
+          authorDropdown.style.display = isHidden ? 'block' : 'none';
+          if (isHidden && searchSuggestions) {
+            searchSuggestions.style.display = 'none';
+          }
+        });
+
+        document.querySelectorAll('.search-author-option').forEach(opt => {
+          opt.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleActiveAuthor(opt.dataset.author);
+          });
+        });
+
+        document.addEventListener('click', (e) => {
+          if (authorDropdown && e.target !== authorFilterBtn && !authorDropdown.contains(e.target)) {
+            authorDropdown.style.display = 'none';
+          }
+        });
+      }
     }
 
     addEvent('btn-open-composer', 'click', () => {

@@ -1961,7 +1961,7 @@ body.light-theme #author-flower.active {
 
 .search-input {
   width: 100%;
-  padding: 14px 18px 14px 44px;
+  padding: 14px 48px 14px 44px;
   border-radius: 20px;
   border: 1px solid var(--header-control-border);
   background: var(--header-search-surface);
@@ -2657,3 +2657,137 @@ body.light-theme #btn-toggle-author-flower.active {
     font-size: 13px;
   }
 }
+
+/* 填寫人篩選按鈕與下拉選單 */
+.search-author-filter-btn {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  z-index: 2;
+  transition: all 0.2s ease;
+}
+
+.search-author-filter-btn:hover {
+  background: var(--header-control-hover);
+  color: var(--text-primary);
+}
+
+.search-author-filter-btn.active {
+  color: var(--accent-1);
+}
+
+.filter-count-dot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-1);
+  border: 1.5px solid var(--bg-card);
+}
+
+.search-author-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 180px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  padding: 8px 0;
+  z-index: 110;
+  animation: fadeInDown 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.search-author-dropdown-title {
+  padding: 6px 16px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 6px;
+}
+
+.search-author-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.search-author-option:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.search-author-option .option-check {
+  font-size: 14px;
+  color: var(--accent-1);
+  width: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.search-author-option.active .option-check {
+  opacity: 1;
+}
+
+.search-author-option .option-avatar {
+  font-size: 16px;
+}
+
+.search-author-option .option-name {
+  font-size: 14px;
+  color: var(--text-secondary);
+  flex: 1;
+}
+
+.search-author-option.active .option-name {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.search-author-option .option-badge {
+  background: #ef4444;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 10px;
+  min-width: 16px;
+  text-align: center;
+  line-height: 1;
+}
+
+@keyframes fadeInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
