@@ -126,10 +126,10 @@
     })();
   </script>
   <script>
-    window.HABIT_SNOWBALL_VERSION = '20260705_1545';
+    window.HABIT_SNOWBALL_VERSION = '20260707_1720';
   </script>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>❄️</text></svg>">
-  <link rel="stylesheet" href="css/style.css?v=20260705_1545">
+  <link rel="stylesheet" href="css/style.css?v=20260707_1720">
 </head>
 <body>
   <!-- 載入中遮罩 (Loading Screen) -->
@@ -364,13 +364,18 @@
   <div class="modal-overlay" id="journal-composer-modal">
     <div class="modal-content journal-modal-content">
       <div class="modal-header-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-        <h2 class="modal-title" style="margin: 0;">✍️ 寫日精進</h2>
-        <span class="modal-close" id="btn-close-composer" style="cursor: pointer; font-size: 28px; line-height: 1; color: var(--text-secondary);">&times;</span>
+        <h2 class="modal-title" style="margin: 0; font-size: 20px;">✍️ 寫日精進</h2>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <button type="button" class="btn-toggle-composer-meta" id="btn-toggle-composer-meta" title="設定選單 (Ctrl+/)">
+            <span>⚙️ 設定</span>
+          </button>
+          <span class="modal-close" id="btn-close-composer" style="cursor: pointer; font-size: 28px; line-height: 1; color: var(--text-secondary);">&times;</span>
+        </div>
       </div>
 
-      <div class="journal-composer-card" style="border: none; padding: 0; background: transparent; backdrop-filter: none; box-shadow: none; margin: 0;">
-        <div class="journal-day-badge" id="journal-current-day">第 1 天</div>
-        <div class="journal-edit-banner" id="journal-edit-banner" style="display: none;">
+      <div class="journal-composer-card" style="border: none; padding: 0; background: transparent; backdrop-filter: none; box-shadow: none; margin: 0; display: flex; flex-direction: column; gap: 12px;">
+        <!-- 正在編輯 Banner (仍單獨顯示，以便於一眼辨識) -->
+        <div class="journal-edit-banner" id="journal-edit-banner" style="display: none; margin-bottom: 4px;">
           <span id="journal-edit-label">正在編輯日記</span>
           <div class="journal-edit-controls">
             <button type="button" class="history-delete-btn" id="btn-edit-prev-journal">上一篇</button>
@@ -378,31 +383,36 @@
             <button type="button" class="history-delete-btn" id="btn-cancel-journal-edit">取消編輯</button>
           </div>
         </div>
-        <div class="journal-meta-row">
-          <button type="button" id="btn-journal-date-picker" class="journal-date-button">
-            <span class="journal-date-button-label">選擇日期</span>
-            <span id="journal-current-date"></span>
-          </button>
-        </div>
-        <div class="journal-date-quick-picker" id="journal-date-quick-picker" style="display: none;">
-          <button type="button" class="toolbar-btn journal-date-quick-btn" id="btn-journal-date-prev">前一天</button>
-          <button type="button" class="toolbar-btn journal-date-quick-btn" id="btn-journal-date-next">後一天</button>
-        </div>
-        <input type="date" id="journal-date-input" class="journal-date-input" />
 
-        <!-- 填寫人選擇 -->
-        <div class="form-group author-selection-group" style="margin-bottom: 20px;">
-          <label class="form-label" style="margin-bottom: 8px; display: block; font-size: 13px; font-weight: 600; color: var(--text-secondary);">✍️ 填寫人</label>
-          <div class="author-selector" style="display: flex; gap: 12px;">
-            <button type="button" class="author-btn" id="author-flower" data-author="小花" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px; border-radius: 8px; border: 1px solid var(--border-subtle); background: rgba(255,255,255,0.02); color: var(--text-secondary); font-weight: 600; cursor: pointer; transition: all 0.2s; font-family: var(--font-body); font-size: 14px;">
+        <!-- 隱藏的設定抽屜 (包含天數、日期、填寫人，精簡成一排) -->
+        <div id="composer-meta-drawer" class="composer-meta-drawer-container">
+          
+          <!-- 天數 Badge -->
+          <div class="journal-day-badge" id="journal-current-day" style="margin: 0; padding: 4px 8px; font-size: 12px; border-radius: 4px; background: rgba(168,216,234,0.12); color: var(--accent-1); border: 1px solid rgba(168,216,234,0.2); font-weight: 600; width: fit-content; line-height: 1;">第 1 天</div>
+
+          <!-- 日期選擇器 -->
+          <div style="display: flex; align-items: center; gap: 4px;">
+            <button type="button" class="toolbar-btn" id="btn-journal-date-prev">◀</button>
+            <button type="button" id="btn-journal-date-picker" class="journal-date-button">
+              <span id="journal-current-date"></span>
+            </button>
+            <button type="button" class="toolbar-btn" id="btn-journal-date-next">▶</button>
+          </div>
+          <input type="date" id="journal-date-input" class="journal-date-input" style="display: none;" />
+
+          <!-- 填寫人選擇 -->
+          <div class="author-selector" style="display: flex; gap: 6px; align-items: center; margin: 0;">
+            <span style="font-size: 12px; color: var(--text-muted);">填寫人：</span>
+            <button type="button" class="author-btn" id="author-flower" data-author="小花">
               <span>👩🏻</span>
               <span>小花</span>
             </button>
-            <button type="button" class="author-btn active" id="author-wei" data-author="小葦" style="flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px; border-radius: 8px; border: 1px solid var(--border-subtle); background: rgba(255,255,255,0.02); color: var(--text-secondary); font-weight: 600; cursor: pointer; transition: all 0.2s; font-family: var(--font-body); font-size: 14px;">
+            <button type="button" class="author-btn active" id="author-wei" data-author="小葦">
               <span>👦🏻</span>
               <span>小葦</span>
             </button>
           </div>
+
         </div>
 
         <input type="text" id="journal-title-input" class="form-input journal-title-input" placeholder="標題會自動生成，也可自行修改">
@@ -610,10 +620,10 @@
   </div>
 
   <script src="js/scoring.js?v=20260626_1045"></script>
-  <script src="js/storage.js?v=20260628_2050"></script>
+  <script src="js/storage.js?v=20260707_1720"></script>
   <script src="js/particles.js?v=20260626_1045"></script>
   <script src="js/snowball.js?v=20260626_1045"></script>
   <script src="js/animations.js?v=20260626_1045"></script>
-  <script src="js/app.js?v=20260628_2050"></script>
+  <script src="js/app.js?v=20260707_1720"></script>
 </body>
 </html>

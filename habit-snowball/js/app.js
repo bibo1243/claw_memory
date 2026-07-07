@@ -2739,9 +2739,26 @@ ${existingStr}
     Animations.toast('已刪除日記', 'info');
   }
 
+  function toggleComposerMetaDrawer() {
+    const drawer = document.getElementById('composer-meta-drawer');
+    if (!drawer) return;
+    const isHidden = drawer.style.display === 'none' || !drawer.style.display;
+    drawer.style.display = isHidden ? 'flex' : 'none';
+    const btn = document.getElementById('btn-toggle-composer-meta');
+    if (btn) {
+      btn.classList.toggle('active', isHidden);
+    }
+  }
+
   function showJournalComposer() {
     var modal = document.getElementById('journal-composer-modal');
     if (modal) modal.classList.add('show');
+    
+    // Ensure the settings drawer is hidden by default
+    const drawer = document.getElementById('composer-meta-drawer');
+    if (drawer) drawer.style.display = 'none';
+    const btn = document.getElementById('btn-toggle-composer-meta');
+    if (btn) btn.classList.remove('active');
   }
 
   function hideJournalComposer() {
@@ -3221,16 +3238,19 @@ ${existingStr}
 
   function setJournalDatePickerOpen(isOpen) {
     isJournalDatePickerOpen = isOpen;
-    const panel = document.getElementById('journal-date-quick-picker');
-    if (!panel) return;
-    panel.style.display = isOpen ? 'grid' : 'none';
   }
 
   function openJournalDatePicker() {
     const input = document.getElementById('journal-date-input');
-    const currentValue = formatDateInputValue(getSelectedJournalDate());
-    if (input) input.value = currentValue;
-    setJournalDatePickerOpen(!isJournalDatePickerOpen);
+    if (input) {
+      const currentValue = formatDateInputValue(getSelectedJournalDate());
+      input.value = currentValue;
+      if (typeof input.showPicker === 'function') {
+        input.showPicker();
+      } else {
+        input.click();
+      }
+    }
   }
 
   function handleJournalDateChange(event) {
@@ -3533,6 +3553,7 @@ ${existingStr}
     addEvent('btn-journal-date-prev', 'click', choosePreviousJournalDate);
     addEvent('btn-journal-date-next', 'click', chooseNextJournalDate);
     addEvent('journal-date-input', 'change', handleJournalDateChange);
+    addEvent('btn-toggle-composer-meta', 'click', toggleComposerMetaDrawer);
     addEvent('btn-force-refresh-page', 'click', forceRefreshPage);
     addEvent('btn-journal-polish', 'click', handleJournalPolish);
     addEvent('btn-journal-keywords', 'click', handleJournalKeywords);
@@ -3542,6 +3563,16 @@ ${existingStr}
     addEvent('btn-journal-save', 'click', saveJournalEntry);
     addEvent('journal-title-input', 'input', syncJournalTitleHint);
     addEvent('journal-input', 'input', autoFormatJournalOutline);
+
+    document.addEventListener('keydown', e => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === '/' || e.code === 'Slash')) {
+        const modal = document.getElementById('journal-composer-modal');
+        if (modal && modal.classList.contains('show')) {
+          e.preventDefault();
+          toggleComposerMetaDrawer();
+        }
+      }
+    });
 
     setupWysiwygEditor(document.getElementById('journal-input'));
 
