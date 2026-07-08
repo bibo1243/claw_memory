@@ -28,8 +28,14 @@ const App = (() => {
   let hasDeferredSyncRender = false;
   let summaryLoadingStates = {};
   let activeCommentEdit = null;
+  let commentSubmitRenderLockUntil = 0;
+  let lastCommentSubmitSignature = '';
+  let lastCommentSubmitAt = 0;
   let ollamaTunnelUrl = '';
   let ollamaStatus = 'testing'; // 'testing' | 'connected' | 'disconnected'
+  let sleepRitualTimer = null;
+  let sleepRitualSecondsLeft = 60;
+  let sleepRitualState = 'idle'; // 'idle' | 'running' | 'success' | 'failed'
 
   const WEEKDAY_LABELS = ['日', '一', '二', '三', '四', '五', '六'];
   const GOOGLE_API_KEY_STORAGE_KEY = 'habit-snowball-google-api-key';
@@ -89,6 +95,161 @@ const App = (() => {
       resetBtn.title = `目前字級：${label}，點擊恢復標準字級`;
       resetBtn.setAttribute('aria-label', `目前字級 ${label}，點擊恢復標準字級`);
     }
+  }
+
+  function getSleepLaunchStats() {
+    if (typeof Storage !== 'undefined' && typeof Storage.getSleepLaunchStats === 'function') {
+      return Storage.getSleepLaunchStats();
+    }
+    const db = Storage.load();
+    const settings = (db && db.settings) || {};
+    const count = Number(settings.sleepLaunchCount || 0);
+    return {
+      count: Number.isFinite(count) ? count : 0,
+      lastAt: settings.sleepLaunchLastAt || null
+    };
+  }
+
+  function renderSleepLaunchCount() {
+    const countEl = document.getElementById('sleep-launch-count');
+    const adjustCountEl = document.getElementById('sleep-adjust-count');
+    const count = getSleepLaunchStats().count;
+    if (countEl) countEl.textContent = String(count);
+    if (adjustCountEl) adjustCountEl.textContent = String(count);
+  }
+
+  function updateSleepRitualCountdown() {
+    const countdownEl = document.getElementById('sleep-ritual-countdown');
+    if (countdownEl) {
+      countdownEl.textContent = String(Math.max(0, sleepRitualSecondsLeft));
+    }
+  }
+
+  function closeSleepRitualOverlay() {
+    const overlay = document.getElementById('sleep-ritual-overlay');
+    if (sleepRitualTimer) {
+      clearInterval(sleepRitualTimer);
+      sleepRitualTimer = null;
+    }
+    if (overlay) {
+      overlay.classList.remove('active');
+      overlay.setAttribute('aria-hidden', 'true');
+    }
+    sleepRitualState = 'idle';
+  }
+
+  function setSleepRitualMode(mode) {
+    const card = document.querySelector('.sleep-ritual-card');
+    const kickerEl = document.getElementById('sleep-ritual-kicker');
+    const titleEl = document.getElementById('sleep-ritual-title');
+    const copyEl = document.getElementById('sleep-ritual-copy');
+    const completeBtn = document.getElementById('btn-sleep-ritual-complete');
+    const closeBtn = document.getElementById('btn-sleep-ritual-close');
+
+    sleepRitualState = mode;
+    if (card) {
+      card.classList.toggle('success', mode === 'success');
+      card.classList.toggle('failed', mode === 'failed');
+    }
+
+    if (mode === 'failed') {
+      if (kickerEl) kickerEl.textContent = '任務失敗，不計次';
+      if (titleEl) titleEl.textContent = '艙門關閉，這次沒算';
+      if (copyEl) copyEl.textContent = '60 秒內沒有按下「我已躺平」，成功次數維持不變。直接關掉，下一輪再發射。';
+      if (completeBtn) completeBtn.hidden = true;
+      if (closeBtn) closeBtn.textContent = '知道了，關閉';
+      return;
+    }
+
+    if (mode === 'success') {
+      if (kickerEl) kickerEl.textContent = '躺平成功，已計次';
+      if (titleEl) titleEl.textContent = '睡眠艙安全著陸';
+      if (copyEl) copyEl.textContent = '成功次數已 +1。現在把手機放遠，不再重開任務。';
+      if (completeBtn) completeBtn.hidden = true;
+      if (closeBtn) closeBtn.textContent = '關閉，去睡';
+      return;
+    }
+
+    if (kickerEl) kickerEl.textContent = '睡眠艙門即將關閉';
+    if (titleEl) titleEl.textContent = '60 秒內躺平';
+    if (copyEl) copyEl.textContent = '手機放遠，按摩一下，紙本書翻兩頁。完成今天最後一次自我保護。';
+    if (completeBtn) {
+      completeBtn.hidden = false;
+      completeBtn.disabled = false;
+      completeBtn.textContent = '我已躺平，關艙計次';
+    }
+    if (closeBtn) closeBtn.textContent = '先不算，關閉';
+  }
+
+  function startSleepRitualCountdown() {
+    const overlay = document.getElementById('sleep-ritual-overlay');
+    sleepRitualSecondsLeft = 60;
+    setSleepRitualMode('running');
+    updateSleepRitualCountdown();
+    if (overlay) {
+      overlay.classList.add('active');
+      overlay.setAttribute('aria-hidden', 'false');
+    }
+    if (sleepRitualTimer) {
+      clearInterval(sleepRitualTimer);
+    }
+    sleepRitualTimer = setInterval(() => {
+      sleepRitualSecondsLeft -= 1;
+      updateSleepRitualCountdown();
+      if (sleepRitualSecondsLeft <= 0) {
+        clearInterval(sleepRitualTimer);
+        sleepRitualTimer = null;
+        setSleepRitualMode('failed');
+        Animations.toast('60 秒逾時：這次不計次。', 'warning', 5000);
+      }
+    }, 1000);
+  }
+
+  function launchSleepRitual() {
+    renderSleepLaunchCount();
+    startSleepRitualCountdown();
+    Animations.toast('躺平挑戰開始：60 秒內關艙才計次。', 'success', 4000);
+  }
+
+  function completeSleepRitual() {
+    if (sleepRitualState !== 'running') return;
+    if (sleepRitualTimer) {
+      clearInterval(sleepRitualTimer);
+      sleepRitualTimer = null;
+    }
+    if (typeof Storage !== 'undefined' && typeof Storage.recordSleepLaunch === 'function') {
+      Storage.recordSleepLaunch();
+    } else {
+      const db = Storage.load();
+      db.settings = db.settings || {};
+      db.settings.sleepLaunchCount = Number(db.settings.sleepLaunchCount || 0) + 1;
+      db.settings.sleepLaunchLastAt = new Date().toISOString();
+      Storage.save(db);
+    }
+    renderSleepLaunchCount();
+    setSleepRitualMode('success');
+    Animations.toast('躺平成功 +1：現在不要再滑了。', 'success', 4000);
+  }
+
+  function adjustSleepLaunchCount(delta) {
+    const beforeCount = getSleepLaunchStats().count;
+    if (typeof Storage !== 'undefined' && typeof Storage.adjustSleepLaunchCount === 'function') {
+      Storage.adjustSleepLaunchCount(delta);
+    } else {
+      const db = Storage.load();
+      db.settings = db.settings || {};
+      const currentCount = Number(db.settings.sleepLaunchCount || 0);
+      db.settings.sleepLaunchCount = Math.max(0, (Number.isFinite(currentCount) ? currentCount : 0) + delta);
+      db.settings.sleepLaunchCountUpdatedAt = new Date().toISOString();
+      Storage.save(db);
+    }
+    renderSleepLaunchCount();
+    const afterCount = getSleepLaunchStats().count;
+    if (afterCount === beforeCount) {
+      Animations.toast('成功次數已經是 0，不能再扣。', 'info', 2500);
+      return;
+    }
+    Animations.toast(delta > 0 ? '已手動補一次躺平成功。' : '已扣回一次躺平成功。', 'success', 2500);
   }
 
   function applyTextScale(scale, options) {
@@ -873,11 +1034,12 @@ const App = (() => {
   async function generateAiJournalKeywords(text, options) {
     const existingKeywords = getAllUniqueKeywords();
     const existingStr = existingKeywords.length > 0
-      ? `我們目前已經有使用的關鍵字庫為：[${existingKeywords.join(', ')}]。請仔細分析日記內容，並「優先」且「儘可能」從已有的關鍵字庫中挑選最符合日記主題的關鍵字（完全相同字樣的字詞）。如果已有庫中確實沒有適合的，你才可以自己創造新的關鍵字。`
-      : '請自行根據日記內容創造適合的關鍵字。';
+      ? `我們目前已經有使用的關鍵字庫為：[${existingKeywords.join(', ')}]。
+請在選取關鍵字時對照已有字庫：如果日記的核心概念與已有庫中的某個關鍵字意思相同或高度相似，請「務必優先採用已有庫中字樣完全一致的詞」以保持標籤統一；如果日記討論的是全新概念，請自行創造新的關鍵字，切勿強行套用無關的已存標籤。`
+      : '請自行根據日記內容創造最貼切的關鍵字。';
     var result = await callGoogleAiJson(
-      `你是中文 SEO 編輯與主題標籤設計師。請從日記中抽出 3 到 6 個最重要、可當作 SEO 標籤的繁體中文關鍵字。
-每個關鍵字請控制在 2 到 8 個字之間，不能是完整句子或太長的片語。
+      `你是專業的中文 SEO 編輯與主題標籤設計師。請仔細分析日記內容，並從中抽取出 3 到 6 個最能代表本篇日記核心主題的繁體中文關鍵字。
+每個關鍵字請控制在 2 到 8 個字之間，必須是具有代表性的概念，不能是完整句子或太長的片語。
 
 ${existingStr}
 
@@ -992,7 +1154,7 @@ ${existingStr}
       }
       const existing = getAllUniqueKeywords();
       const matches = existing.filter(k => k.toLowerCase().includes(val) && !journalDraftKeywords.includes(k));
-      
+
       if (matches.length > 0) {
         dropdown.innerHTML = matches.map(m => `<div class="keyword-dropdown-item" onclick="App.addJournalKeyword('${escapeHtml(m)}')" style="padding: 6px 12px; cursor: pointer; border-bottom: 1px solid var(--border-subtle); color: var(--text-primary); font-size: 12px;">${escapeHtml(m)}</div>`).join('');
         dropdown.style.display = 'block';
@@ -1175,6 +1337,7 @@ ${existingStr}
     renderHabits();
     renderHistory();
     renderJournal();
+    renderSleepLaunchCount();
     renderStats();
     renderWeeklyChart();
     updateGlobalAuthorBadges();
@@ -1190,6 +1353,36 @@ ${existingStr}
       activeEl.tagName === 'INPUT' ||
       activeEl.tagName === 'TEXTAREA' ||
       activeEl.isContentEditable;
+  }
+
+  function isEditorInteractionTarget(target) {
+    if (!target || !target.closest) return false;
+    return Boolean(
+      target.closest('.add-comment-box') ||
+      target.closest('.comment-item') ||
+      target.closest('#journal-composer-modal') ||
+      target.closest('.wysiwyg-toolbar') ||
+      target.closest('.sticker-select-option')
+    );
+  }
+
+  function lockCommentSubmitRender(ms) {
+    commentSubmitRenderLockUntil = Math.max(commentSubmitRenderLockUntil, Date.now() + ms);
+  }
+
+  function isCommentSubmitRenderLocked() {
+    return Date.now() < commentSubmitRenderLockUntil;
+  }
+
+  function scheduleDeferredSyncRenderFlush(event) {
+    if (isCommentSubmitRenderLocked()) return;
+    var nextTarget = event && event.relatedTarget;
+    if (isEditorInteractionTarget(nextTarget)) return;
+    window.setTimeout(function() {
+      if (isCommentSubmitRenderLocked()) return;
+      if (isTypingInEditor() || isEditorInteractionTarget(document.activeElement)) return;
+      flushDeferredSyncRender();
+    }, 0);
   }
 
   function renderAllUnlessTyping() {
@@ -1545,7 +1738,7 @@ ${existingStr}
       const author = entry.author || '小葦';
       const authorIcon = author === '小花' ? '👩🏻' : '👦🏻';
       const authorClass = author === '小花' ? 'author-tag-flower' : 'author-tag-wei';
-      
+
       // Color-coding
       const cardAuthorClass = author === '小花' ? 'card-flower' : 'card-wei';
 
@@ -1554,7 +1747,7 @@ ${existingStr}
       var readCommentAuthors = [];
       var now = new Date();
       var entryComments = getVisibleComments(entry.comments);
-      
+
       var readCommentIds = [];
       try {
         readCommentIds = JSON.parse(localStorage.getItem('read-comment-ids') || '[]');
@@ -2556,7 +2749,7 @@ ${existingStr}
       journalKeywordsTouched = false;
       blockedJournalKeywords = new Set();
       updateJournalKeywordPanel(Array.isArray(entry.keywords) ? entry.keywords : []);
-      
+
       // Load images
       journalDraftImages = Array.isArray(entry.images) ? JSON.parse(JSON.stringify(entry.images)) : [];
       renderJournalImageGrid();
@@ -2833,13 +3026,42 @@ ${existingStr}
     renderJournal();
   }
 
+  function handleCommentSubmitEvent(event, entryId, triggerEl) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    if (!triggerEl) return;
+
+    var eventType = event && event.type;
+    var isPrimaryStart = eventType === 'pointerdown' || eventType === 'mousedown' || eventType === 'touchstart';
+
+    if (isPrimaryStart) {
+      if (triggerEl.dataset.commentPrimaryHandled === 'true') return;
+      triggerEl.dataset.commentPrimaryHandled = 'true';
+      window.setTimeout(function() {
+        if (triggerEl && triggerEl.dataset) {
+          delete triggerEl.dataset.commentPrimaryHandled;
+        }
+      }, 1200);
+    }
+
+    if (eventType === 'click' && triggerEl.dataset.commentPrimaryHandled === 'true') {
+      delete triggerEl.dataset.commentPrimaryHandled;
+      return;
+    }
+
+    lockCommentSubmitRender(700);
+    submitComment(entryId, triggerEl);
+  }
+
   function submitComment(entryId, triggerEl) {
     var container = triggerEl;
     while (container && !container.classList.contains('add-comment-box')) {
       container = container.parentElement;
     }
     if (!container) return;
-    
+
     var input = container.querySelector('.comment-content-input');
     var content = '';
     if (input) {
@@ -2849,20 +3071,20 @@ ${existingStr}
       Animations.toast('請輸入評論內容', 'warning');
       return;
     }
-    
+
     var activeAuthorBtn = container.querySelector('.comment-author-btn.active');
     var author = activeAuthorBtn ? activeAuthorBtn.getAttribute('data-comment-author') : '小葦';
-    
+
     var stickerInput = container.querySelector('.comment-selected-sticker');
     var sticker = stickerInput ? stickerInput.value : '';
-    
+
     var tags = [];
     var activeTags = container.querySelectorAll('.quick-tag-option.active');
     for (var i = 0; i < activeTags.length; i++) {
       var text = activeTags[i].textContent.split(' ')[0].trim();
       tags.push(text);
     }
-    
+
     var customInput = container.querySelector('.comment-custom-tags');
     var customText = customInput ? customInput.value.trim() : '';
     if (customText) {
@@ -2874,11 +3096,19 @@ ${existingStr}
         }
       }
     }
-    
+
+    var submitSignature = [entryId, author, content, sticker, tags.join('|')].join('::');
+    var submitNow = Date.now();
+    if (submitSignature === lastCommentSubmitSignature && submitNow - lastCommentSubmitAt < 1000) {
+      return;
+    }
+    lastCommentSubmitSignature = submitSignature;
+    lastCommentSubmitAt = submitNow;
+
     var db = Storage.load();
     var originalEntry = db.journalEntries.find(function(item) { return item.id === entryId; });
     if (!originalEntry) return;
-    
+
     if (!Array.isArray(originalEntry.comments)) {
       originalEntry.comments = [];
     }
@@ -2909,14 +3139,15 @@ ${existingStr}
       };
       originalEntry.comments.push(newComment);
     }
-    
+
     Storage.updateJournalEntry(entryId, {
       comments: originalEntry.comments
     });
-    
+
     expandedJournalEntryIds.add(entryId);
     activeCommentEdit = null;
-    
+
+    hasDeferredSyncRender = false;
     renderAll();
     Animations.toast(editingComment ? '評論已更新' : '評論已發送', 'success');
   }
@@ -3150,10 +3381,10 @@ ${existingStr}
             '<input type="hidden" class="comment-selected-sticker" value="' + escapeHtml(editingComment && editingComment.sticker ? editingComment.sticker : '') + '" />' +
           '</div>' +
           '<div style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px; width: 100%;">' +
-            '<div class="comment-content-input" contenteditable="true" data-placeholder="' + commentPlaceholder + '" style="width: 100%;" onkeydown="if((event.ctrlKey || event.metaKey) && event.key === \'Enter\') { event.preventDefault(); App.submitComment(\'' + entry.id + '\', this); }">' + commentEditorHtml + '</div>' +
+            '<div class="comment-content-input" contenteditable="true" data-placeholder="' + commentPlaceholder + '" style="width: 100%;" onkeydown="if((event.ctrlKey || event.metaKey) && event.key === \'Enter\') { App.handleCommentSubmitEvent(event, \'' + entry.id + '\', this); }">' + commentEditorHtml + '</div>' +
             '<div style="display: flex; justify-content: flex-end; gap: 8px;">' +
               (editingComment ? '<button type="button" class="btn btn-secondary" style="padding: 0 14px; font-size: 12px; height: 34px; font-weight: 600;" onclick="App.cancelCommentEdit()">取消編輯</button>' : '') +
-              '<button type="button" class="btn btn-primary" style="padding: 0 14px; font-size: 12px; height: 34px; font-weight: 600;" onclick="App.submitComment(\'' + entry.id + '\', this)">' + commentPrimaryAction + '</button>' +
+              '<button type="button" class="btn btn-primary" style="padding: 0 14px; font-size: 12px; height: 34px; font-weight: 600;" onpointerdown="App.handleCommentSubmitEvent(event, \'' + entry.id + '\', this)" onmousedown="App.handleCommentSubmitEvent(event, \'' + entry.id + '\', this)" ontouchstart="App.handleCommentSubmitEvent(event, \'' + entry.id + '\', this)" onclick="App.handleCommentSubmitEvent(event, \'' + entry.id + '\', this)">' + commentPrimaryAction + '</button>' +
             '</div>' +
           '</div>' +
         '</div>' +
@@ -3448,6 +3679,14 @@ ${existingStr}
 
 
     addEvent('btn-reset-all-data', 'click', resetAllData);
+    addEvent('btn-sleep-launch', 'click', launchSleepRitual);
+    addEvent('btn-sleep-ritual-complete', 'click', completeSleepRitual);
+    addEvent('btn-sleep-ritual-close', 'click', closeSleepRitualOverlay);
+    addEvent('btn-sleep-count-minus', 'click', () => adjustSleepLaunchCount(-1));
+    addEvent('btn-sleep-count-plus', 'click', () => adjustSleepLaunchCount(1));
+    addEvent('sleep-ritual-overlay', 'click', e => {
+      if (e.target.id === 'sleep-ritual-overlay') closeSleepRitualOverlay();
+    });
     addEvent('btn-text-scale-down', 'click', () => adjustTextScale(-TEXT_SCALE_STEP));
     addEvent('btn-text-scale-reset', 'click', () => applyTextScale(DEFAULT_TEXT_SCALE));
     addEvent('btn-text-scale-up', 'click', () => adjustTextScale(TEXT_SCALE_STEP));
@@ -3614,9 +3853,7 @@ ${existingStr}
 
     setupWysiwygEditor(document.getElementById('journal-input'));
 
-    document.addEventListener('focusout', function() {
-      window.setTimeout(flushDeferredSyncRender, 0);
-    });
+    document.addEventListener('focusout', scheduleDeferredSyncRenderFlush);
 
     window.addEventListener('resize', () => {
       SnowballVis.resize();
@@ -3648,6 +3885,7 @@ ${existingStr}
     toggleQuickTag,
     editComment,
     cancelCommentEdit,
+    handleCommentSubmitEvent,
     submitComment,
     deleteComment,
     generateSummary,
